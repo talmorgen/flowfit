@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: flowfit-garmin-sync
+    runtime: docker
+    rootDir: garmin-sync
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: SYNC_API_KEY
+        generateValue: true
+      - key: FLOWFIT_ENDPOINT
+        sync: false
+      - key: FLOWFIT_SECRET
+        sync: false
+      - key: SYNC_DAYS
+        value: "14"
+      - key: GARMIN_TOKEN_DIR
+        value: /data/garmin-tokens
+    disk:
+      name: garmin-tokens
+      mountPath: /data
+      sizeGB: 1
