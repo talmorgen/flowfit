@@ -10,6 +10,9 @@ import { Textarea } from '@/components/ui/textarea';
 type Exercise = { id: number; name: string; sets: number; reps: number; weight: number | null; note?: string };
 type Plan = { id: number; name: string; subtitle: string; accent: string; exercises: Exercise[]; kind?: 'strength' | 'run'; distanceKm?: number; targetPace?: string };
 type Screen = 'dashboard' | 'plans' | 'new-plan' | 'choose' | 'workout';
+type ActiveWorkoutSession = { workoutId: string; planId: number; exerciseId: number; completedSets: number; rpe: number; screen: 'choose' | 'workout'; startedAt: string; updatedAt: string };
+
+const ACTIVE_WORKOUT_KEY = 'flowfit-active-workout';
 
 const initialPlans: Plan[] = [
   { id: 1, name: 'Full Body A', subtitle: 'האימון הנוכחי · 8 תרגילים', accent: 'lime', exercises: [
@@ -46,12 +49,36 @@ export default function Home() {
   const [completedSets, setCompletedSets] = useState(0);
   const [rpe, setRpe] = useState(7);
   const [workoutId, setWorkoutId] = useState('');
+  const [workoutStartedAt, setWorkoutStartedAt] = useState('');
+  const [sessionReady, setSessionReady] = useState(false);
 
   const selectedPlan = plans.find((plan) => plan.id === selectedPlanId)!;
   const activeExercise = selectedPlan.exercises.find((exercise) => exercise.id === activeExerciseId) ?? selectedPlan.exercises[0];
 
   useEffect(() => { try { const saved = localStorage.getItem('flowfit-plans'); if (saved) { const parsed = JSON.parse(saved) as Plan[]; if (parsed.length) { setPlans(parsed); setSelectedPlanId(parsed[0].id); } } } catch { /* keep defaults */ } finally { setPlansReady(true); } }, []);
   useEffect(() => { if (plansReady) localStorage.setItem('flowfit-plans', JSON.stringify(plans)); }, [plans, plansReady]);
+  useEffect(() => {
+    if (!plansReady || sessionReady) return;
+    try {
+      const saved = localStorage.getItem(ACTIVE_WORKOUT_KEY);
+      if (saved) {
+        const session = JSON.parse(saved) as ActiveWorkoutSession;
+        const savedPlan = plans.find((plan) => plan.id === session.planId);
+        const savedExercise = savedPlan?.exercises.find((exercise) => exercise.id === session.exerciseId);
+        if (savedPlan && savedExercise && session.workoutId) {
+          setSelectedPlanId(session.planId); setActiveExerciseId(session.exerciseId); setCompletedSets(session.completedSets || 0);
+          setRpe(session.rpe || 7); setWorkoutId(session.workoutId); setWorkoutStartedAt(session.startedAt || new Date().toISOString());
+          setScreen(session.screen || 'workout');
+        }
+      }
+    } catch { localStorage.removeItem(ACTIVE_WORKOUT_KEY); }
+    finally { setSessionReady(true); }
+  }, [plans, plansReady, sessionReady]);
+  useEffect(() => {
+    if (!sessionReady || !workoutId || (screen !== 'workout' && screen !== 'choose')) return;
+    const session: ActiveWorkoutSession = { workoutId, planId: selectedPlanId, exerciseId: activeExerciseId, completedSets, rpe, screen, startedAt: workoutStartedAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
+    localStorage.setItem(ACTIVE_WORKOUT_KEY, JSON.stringify(session));
+  }, [activeExerciseId, completedSets, rpe, screen, selectedPlanId, sessionReady, workoutId, workoutStartedAt]);
 
   function updateExercise(id: number, field: 'sets' | 'reps' | 'weight', delta: number) {
     setPlans((current) => current.map((plan) => plan.id !== selectedPlanId ? plan : {
@@ -138,8 +165,8 @@ export default function Home() {
         {screen === 'dashboard' && <Dashboard plans={plans} onPlans={() => setScreen('plans')} onStart={(planId) => { setSelectedPlanId(planId); setScreen('choose'); }} />}
         {screen === 'plans' && <PlansScreen plans={plans} selectedPlan={selectedPlan} selectedPlanId={selectedPlanId} setSelectedPlanId={setSelectedPlanId} editing={editing} setEditing={setEditing} updateExercise={updateExercise} updateRunPlan={updateRunPlan} removeExercise={removeExercise} moveExercise={moveExercise} renameExercise={renameExercise} addExercise={addExercise} deletePlan={deletePlan} generateComplementaryPlan={generateComplementaryPlan} setScreen={setScreen} />}
         {screen === 'new-plan' && <NewPlanScreen onCancel={() => setScreen('plans')} onCreate={createPlan} />}
-        {screen === 'choose' && <ChooseScreen plan={selectedPlan} onChoose={(id) => { setWorkoutId((current) => current || crypto.randomUUID()); setActiveExerciseId(id); setCompletedSets(0); setScreen('workout'); }} />}
-        {screen === 'workout' && <WorkoutScreen key={activeExercise.id} workoutId={workoutId} plan={selectedPlan} exercise={activeExercise} completedSets={completedSets} setCompletedSets={setCompletedSets} rpe={rpe} setRpe={setRpe} onSwitch={() => setScreen('choose')} onNext={() => { const index = selectedPlan.exercises.findIndex((item) => item.id === activeExercise.id); const next = selectedPlan.exercises[(index + 1) % selectedPlan.exercises.length]; setActiveExerciseId(next.id); setCompletedSets(0); }} />}
+        {screen === 'choose' && <ChooseScreen plan={selectedPlan} onChoose={(id) => { if (!workoutId) { setWorkoutId(crypto.randomUUID()); setWorkoutStartedAt(new Date().toISOString()); } setActiveExerciseId(id); setCompletedSets(0); setScreen('workout'); }} />}
+        {screen === 'workout' && <WorkoutScreen key={`${workoutId}:${activeExercise.id}`} workoutId={workoutId} workoutStartedAt={workoutStartedAt} plan={selectedPlan} exercise={activeExercise} completedSets={completedSets} setCompletedSets={setCompletedSets} rpe={rpe} setRpe={setRpe} onSwitch={() => setScreen('choose')} onNext={() => { const index = selectedPlan.exercises.findIndex((item) => item.id === activeExercise.id); const next = selectedPlan.exercises[(index + 1) % selectedPlan.exercises.length]; setActiveExerciseId(next.id); setCompletedSets(0); }} />}
       </div>
     </main>
   );
@@ -370,15 +397,36 @@ function guideForExercise(name: string) {
   return exerciseGuides[name] || { search: `${name} exercise proper form`, cues: ['בצע את התנועה בשליטה ובטווח שאינו מכאיב', 'שמור נשימה ומנח גוף יציב', 'אם הטכניקה נשברת, הורד משקל או עצור את הסט'] };
 }
 
-function WorkoutScreen({ workoutId, plan, exercise, completedSets, setCompletedSets, rpe, setRpe, onSwitch, onNext }: { workoutId: string; plan: Plan; exercise: Exercise; completedSets: number; setCompletedSets: (n: number) => void; rpe: number; setRpe: (n: number) => void; onSwitch: () => void; onNext: () => void }) {
+type WorkoutDraft = { weight: number; reps: number; sessionSets: number; note: string; timerMode: 'set' | 'rest'; phaseStartedAt: number; savedSets: Array<{ setId: string; setNumber: number; reps: number; weightKg: number; rpe: number; notes: string; performedAt: string; setDurationSec: number }> };
+const REST_SECONDS = 90;
+function formatDuration(seconds: number) { return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`; }
+
+function WorkoutScreen({ workoutId, workoutStartedAt, plan, exercise, completedSets, setCompletedSets, rpe, setRpe, onSwitch, onNext }: { workoutId: string; workoutStartedAt: string; plan: Plan; exercise: Exercise; completedSets: number; setCompletedSets: (n: number) => void; rpe: number; setRpe: (n: number) => void; onSwitch: () => void; onNext: () => void }) {
   const [weight, setWeight] = useState(exercise.weight ?? 0);
   const [reps, setReps] = useState(exercise.reps);
   const [sessionSets, setSessionSets] = useState(exercise.sets);
   const [note, setNote] = useState('');
+  const [timerMode, setTimerMode] = useState<'set' | 'rest'>('set');
+  const [phaseStartedAt, setPhaseStartedAt] = useState(Date.now());
+  const [now, setNow] = useState(Date.now());
+  const [savedSets, setSavedSets] = useState<WorkoutDraft['savedSets']>([]);
+  const [draftReady, setDraftReady] = useState(false);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [lastSet, setLastSet] = useState<{ reps: number; weightKg: number; timestamp: string } | null>(null);
   const [historyState, setHistoryState] = useState<'loading' | 'found' | 'empty'>('loading');
   const guide = guideForExercise(exercise.name);
+  const draftKey = `flowfit-workout-draft:${workoutId}:${exercise.id}`;
+  const elapsedSeconds = Math.max(0, Math.floor((now - phaseStartedAt) / 1000));
+  const restRemaining = Math.max(0, REST_SECONDS - elapsedSeconds);
+  const effortChoices = [{ value: 4, emoji: '😄', label: 'קל' }, { value: 6, emoji: '🙂', label: 'נוח' }, { value: 7, emoji: '😐', label: 'בינוני' }, { value: 8, emoji: '😣', label: 'קשה' }, { value: 10, emoji: '🥵', label: 'מקסימלי' }];
+  useEffect(() => {
+    try { const saved = localStorage.getItem(draftKey); if (saved) { const draft = JSON.parse(saved) as WorkoutDraft; setWeight(draft.weight); setReps(draft.reps); setSessionSets(draft.sessionSets); setNote(draft.note || ''); setTimerMode(draft.timerMode || 'set'); setPhaseStartedAt(draft.phaseStartedAt || Date.now()); setSavedSets(draft.savedSets || []); setCompletedSets(draft.savedSets?.length || 0); } }
+    catch { localStorage.removeItem(draftKey); }
+    finally { setDraftReady(true); }
+  }, [draftKey]);
+  useEffect(() => { if (draftReady) localStorage.setItem(draftKey, JSON.stringify({ weight, reps, sessionSets, note, timerMode, phaseStartedAt, savedSets } satisfies WorkoutDraft)); }, [draftKey, draftReady, note, phaseStartedAt, reps, savedSets, sessionSets, timerMode, weight]);
+  useEffect(() => { const interval = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(interval); }, []);
+  useEffect(() => { if (timerMode === 'rest' && restRemaining === 0) { setTimerMode('set'); setPhaseStartedAt(Date.now()); } }, [restRemaining, timerMode]);
   useEffect(() => {
     let active = true;
     setHistoryState('loading');
@@ -387,20 +435,25 @@ function WorkoutScreen({ workoutId, plan, exercise, completedSets, setCompletedS
       const latest = data.sets?.find((set) => set.exerciseName.trim() === exercise.name.trim() && set.planName.trim() === plan.name.trim()) || data.sets?.find((set) => set.exerciseName.trim() === exercise.name.trim());
       if (!latest) { setLastSet(null); setHistoryState('empty'); return; }
       const previous = { reps: Number(latest.reps) || exercise.reps, weightKg: Number(latest.weightKg) || 0, timestamp: latest.timestamp };
-      setLastSet(previous); setReps(previous.reps); if (exercise.weight !== null) setWeight(previous.weightKg); setHistoryState('found');
+      setLastSet(previous); if (!localStorage.getItem(draftKey)) { setReps(previous.reps); if (exercise.weight !== null) setWeight(previous.weightKg); } setHistoryState('found');
     }).catch(() => { if (active) setHistoryState('empty'); });
     return () => { active = false; };
-  }, [exercise.name, exercise.reps, exercise.weight, plan.name]);
+  }, [draftKey, exercise.name, exercise.reps, exercise.weight, plan.name]);
   async function saveSet() {
     const nextCompleted = Math.min(sessionSets, completedSets + 1);
+    const performedAt = new Date().toISOString();
+    const savedSet = { setId: crypto.randomUUID(), setNumber: nextCompleted, reps, weightKg: exercise.weight === null ? 0 : weight, rpe, notes: note, performedAt, setDurationSec: timerMode === 'set' ? elapsedSeconds : 0 };
     setSaveState('saving');
     try {
-      const response = await fetch('/api/sheets', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'saveSet', set: { setId: crypto.randomUUID(), workoutId, planName: plan.name, activityType: 'strength', exerciseName: exercise.name, setNumber: nextCompleted, reps, weightKg: exercise.weight === null ? 0 : weight, rpe, notes: note, source: 'FlowFit' } }) });
+      const response = await fetch('/api/sheets', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'saveSet', set: { ...savedSet, workoutId, workoutStartedAt, planId: plan.id, planName: plan.name, activityType: 'strength', exerciseId: exercise.id, exerciseName: exercise.name, source: 'FlowFit' } }) });
       const data = await response.json() as { ok: boolean };
       if (!data.ok) throw new Error();
       setCompletedSets(nextCompleted);
+      setSavedSets((current) => [...current, savedSet]);
       setSaveState('saved');
       setNote('');
+      setTimerMode('rest');
+      setPhaseStartedAt(Date.now());
     } catch { setSaveState('error'); }
   }
   return <div className="mx-auto max-w-2xl"><Card className="overflow-hidden border-0 bg-card p-0 shadow-[0_18px_50px_rgba(0,0,0,.22)]">
@@ -411,10 +464,10 @@ function WorkoutScreen({ workoutId, plan, exercise, completedSets, setCompletedS
       <details className="group mb-5 rounded-2xl border border-cyan-400/15 bg-cyan-400/5"><summary className="flex cursor-pointer list-none items-center gap-3 p-3"><div className="h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-white/90">{guide.gif ? <img src={`https://raw.githubusercontent.com/mohamedatef90/exercise-library/main/gifs/${guide.gif}`} alt={`הדגמה של ${exercise.name}`} className="h-full w-full object-cover" /> : <Dumbbell className="m-4 text-cyan-700" size={24} />}</div><div className="min-w-0 flex-1"><p className="text-[11px] text-cyan-300">איך לבצע נכון</p><h3 className="truncate text-sm font-bold">דגשים ל־{exercise.name}</h3><p className="mt-1 text-[10px] text-muted-foreground">לחץ לפתיחת ההנחיות</p></div><ChevronLeft className="text-cyan-300 transition-transform group-open:-rotate-90" size={18} /></summary><div className="border-t border-cyan-400/10 px-4 pb-4 pt-3"><ul className="space-y-2 text-xs leading-5 text-muted-foreground">{guide.cues.map((cue) => <li key={cue} className="flex gap-2"><span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />{cue}</li>)}</ul><a href={`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(guide.search)}`} target="_blank" rel="noreferrer" className="mt-3 flex items-center justify-center gap-1.5 rounded-xl bg-cyan-400/10 px-3 py-2 text-xs font-semibold text-cyan-300">עוד הדגמות בתמונות<ExternalLink size={14} /></a><p className="mt-2 text-center text-[9px] text-muted-foreground">GIF: open-source exercise-library</p></div></details>
       <div className="mb-3 flex items-center justify-between rounded-xl bg-muted/45 px-3 py-2 text-xs"><span className="text-muted-foreground">הביצוע האחרון</span><strong>{historyState === 'loading' ? 'טוען…' : lastSet ? `${lastSet.weightKg} ק״ג × ${lastSet.reps} חזרות` : 'עדיין לא תועד'}</strong></div>
       <div className="mb-5 grid grid-cols-[1fr_auto_1fr] items-center gap-3"><BigStepper label="משקל" value={weight} suffix="ק״ג" onMinus={() => setWeight(Math.max(0, weight - 2.5))} onPlus={() => setWeight(weight + 2.5)} /><span className="pt-6 text-xl text-muted-foreground">×</span><BigStepper label="חזרות" value={reps} onMinus={() => setReps(Math.max(1, reps - 1))} onPlus={() => setReps(reps + 1)} /></div>
-      <div className="rounded-2xl bg-muted/55 p-4"><div className="mb-3 flex justify-between text-sm"><span className="font-semibold">כמה קשה היה?</span><strong className="text-primary">RPE {rpe}</strong></div><input className="w-full accent-[#d9ff5b]" type="range" min="5" max="10" step="0.5" value={rpe} onChange={(e) => setRpe(Number(e.target.value))} /></div>
-      <Button onClick={saveSet} disabled={saveState === 'saving' || completedSets >= sessionSets} className="mt-5 h-14 w-full rounded-2xl text-base font-bold"><Check className="ml-2" />{saveState === 'saving' ? 'שומר בגיליון…' : completedSets >= sessionSets ? 'כל הסטים נשמרו' : saveState === 'saved' ? 'הסט נשמר · שמירת הסט הבא' : saveState === 'error' ? 'ניסיון שמירה נוסף' : 'שמירת סט'}</Button>
-      <div className="mt-5 flex items-center justify-between gap-3"><div className="flex items-center gap-2"><span className="text-sm font-bold">{completedSets} מתוך {sessionSets} סטים הושלמו</span><div className="flex items-center rounded-lg bg-muted"><button onClick={() => { setSessionSets(Math.max(1, sessionSets - 1)); setCompletedSets(Math.min(completedSets, Math.max(1, sessionSets - 1))); }} className="p-1.5 text-muted-foreground" aria-label="הסרת סט"><Minus size={14} /></button><button onClick={() => setSessionSets(sessionSets + 1)} className="p-1.5 text-muted-foreground" aria-label="הוספת סט"><Plus size={14} /></button></div></div><span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground"><Timer size={14} /> מנוחה 01:24</span></div>
-      <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary transition-all" style={{ width: `${(completedSets / sessionSets) * 100}%` }} /></div>
+      <div className="rounded-2xl border border-border/70 bg-muted/35 p-4"><div className="mb-3 flex items-center justify-between"><div><p className="text-sm font-bold">מאמץ בסט הזה</p><p className="text-[11px] text-muted-foreground">בחר לפי ההרגשה — לא לפי מספר הסט</p></div><strong className="rounded-lg bg-primary/10 px-2 py-1 text-xs text-primary">RPE {rpe}</strong></div><div className="grid grid-cols-5 gap-1.5">{effortChoices.map((choice) => <button key={choice.value} type="button" onClick={() => setRpe(choice.value)} aria-pressed={rpe === choice.value} className={`rounded-xl border px-1 py-2 text-center transition ${rpe === choice.value ? 'border-primary bg-primary/10 text-primary' : 'border-border/60 bg-card text-muted-foreground'}`}><span className="block text-xl" aria-hidden="true">{choice.emoji}</span><span className="mt-1 block text-[9px] font-semibold">{choice.label}</span></button>)}</div></div>
+      <div className={`mt-5 flex items-center justify-between rounded-2xl border p-4 ${timerMode === 'rest' ? 'border-cyan-400/35 bg-cyan-400/5' : 'border-primary/30 bg-primary/5'}`}><div className="flex items-center gap-2"><Timer size={18} className={timerMode === 'rest' ? 'text-cyan-300' : 'text-primary'} /><div><p className="text-xs text-muted-foreground">{timerMode === 'rest' ? 'מנוחה בין סטים' : 'זמן הסט הנוכחי'}</p><strong className="text-2xl tabular-nums">{formatDuration(timerMode === 'rest' ? restRemaining : elapsedSeconds)}</strong></div></div>{timerMode === 'rest' && <button type="button" onClick={() => { setTimerMode('set'); setPhaseStartedAt(Date.now()); }} className="rounded-xl bg-cyan-400/15 px-3 py-2 text-xs font-bold text-cyan-300">התחלת הסט הבא</button>}</div>
+      <Button onClick={saveSet} disabled={saveState === 'saving' || completedSets >= sessionSets || timerMode === 'rest'} className="mt-4 h-14 w-full rounded-2xl text-base font-bold"><Check className="ml-2" />{saveState === 'saving' ? 'שומר בגיליון…' : completedSets >= sessionSets ? 'כל הסטים נשמרו' : timerMode === 'rest' ? 'במנוחה — הסט הבא יתחיל מיד' : saveState === 'error' ? 'ניסיון שמירה נוסף' : 'שמירת סט והתחלת מנוחה'}</Button>
+      <div className="mt-5 rounded-2xl bg-muted/35 p-4"><div className="flex items-center justify-between gap-3"><div><p className="text-xs text-muted-foreground">התקדמות בתרגיל</p><strong className="text-sm">{completedSets} מתוך {sessionSets} סטים הושלמו</strong></div><div className="flex items-center rounded-lg bg-card"><button onClick={() => { setSessionSets(Math.max(1, sessionSets - 1)); setCompletedSets(Math.min(completedSets, Math.max(1, sessionSets - 1))); }} className="p-1.5 text-muted-foreground" aria-label="הסרת סט"><Minus size={14} /></button><button onClick={() => setSessionSets(sessionSets + 1)} className="p-1.5 text-muted-foreground" aria-label="הוספת סט"><Plus size={14} /></button></div></div><div className="mt-3 flex gap-2" aria-label={`${completedSets} מתוך ${sessionSets} סטים הושלמו`}>{Array.from({ length: sessionSets }, (_, index) => <span key={index} className={`flex h-8 flex-1 items-center justify-center rounded-lg text-xs font-bold ${index < completedSets ? 'bg-primary text-primary-foreground' : index === completedSets ? 'border border-primary/60 bg-primary/10 text-primary' : 'bg-card text-muted-foreground'}`}>{index < completedSets ? <Check size={15} /> : index + 1}</span>)}</div></div>
       <div className="mt-5 space-y-2"><Textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="כתיבת הערה על התרגיל או הסט..." className="min-h-24 resize-none rounded-xl bg-muted/45" /><button className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-border py-3 text-sm font-semibold text-muted-foreground"><Mic size={17} />הוספת הערה בקול</button></div>
     </div>
   </Card></div>;
