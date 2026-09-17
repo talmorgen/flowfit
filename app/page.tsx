@@ -515,13 +515,28 @@ function WorkoutScreen({ workoutId, workoutStartedAt, plan, exercise, completedS
   const restRemaining = Math.max(0, REST_SECONDS - elapsedSeconds);
   const exerciseIndex = plan.exercises.findIndex((item) => item.id === exercise.id);
   const nextExercise = plan.exercises[(exerciseIndex + 1) % plan.exercises.length];
-  const coachAdvice = rpe >= 9 ? { text: 'המאמץ גבוה. מומלץ להוריד מעט משקל או חזרה אחת בסט הבא.', action: 'הורד 2.5 ק״ג', apply: () => setWeight(Math.max(0, weight - 2.5)) } : rpe <= 6 && completedSets > 0 ? { text: 'הסט הרגיש בשליטה. אפשר להוסיף מעט משקל כל עוד הטכניקה נשארת נקייה.', action: 'הוסף 2.5 ק״ג', apply: () => setWeight(weight + 2.5) } : { text: `שמור על הטכניקה. אחרי ${exercise.name} נעבור ל־${nextExercise?.name || 'התרגיל הבא'}.`, action: '', apply: () => undefined };
+  const isBodyweight = exercise.weight === null;
+  const isPullUp = exercise.name.includes('מתח') || exercise.name.toLowerCase().includes('pull up');
+  const isPushUp = exercise.name.includes('שכיבות סמיכה') || exercise.name.toLowerCase().includes('push up');
+  const hardBodyweightTip = isPullUp ? 'נסה חזרה אחת פחות. אם הטכניקה נשברת, השתמש בגומייה או במכונת מתח מסייעת.' : isPushUp ? 'נסה חזרה אחת פחות, או עבור לשכיבות סמיכה בשיפוע גבוה יותר.' : 'נסה חזרה אחת פחות או וריאציה קלה יותר, בלי לקצר את טווח התנועה.';
+  const easyBodyweightTip = isPullUp ? 'אפשר להוסיף חזרה אחת, או להאט את הירידה לשלוש שניות.' : isPushUp ? 'אפשר להוסיף חזרה אחת או להאט את הירידה, כל עוד הגוף נשאר בקו ישר.' : 'אפשר להוסיף חזרה אחת או לבצע ירידה איטית יותר, כל עוד הטכניקה נשארת נקייה.';
+  const coachAdvice = rpe >= 9
+    ? isBodyweight
+      ? { text: `הסט היה קרוב למקסימום. ${hardBodyweightTip}`, action: 'הורד חזרה אחת', apply: () => setReps(Math.max(1, reps - 1)) }
+      : { text: 'הסט היה קרוב למקסימום. הורד מעט משקל בסט הבא ושמור על אותה טכניקה.', action: 'הורד 2.5 ק״ג', apply: () => setWeight(Math.max(0, weight - 2.5)) }
+    : rpe <= 6 && completedSets > 0
+      ? isBodyweight
+        ? { text: `הסט היה בשליטה. ${easyBodyweightTip}`, action: 'הוסף חזרה אחת', apply: () => setReps(reps + 1) }
+        : { text: 'הסט היה בשליטה. אפשר להוסיף מעט משקל כל עוד הטכניקה נשארת נקייה.', action: 'הוסף 2.5 ק״ג', apply: () => setWeight(weight + 2.5) }
+      : { text: `${guide.cues[Math.min(completedSets, guide.cues.length - 1)]} אחרי ${exercise.name} נעבור ל־${nextExercise?.name || 'התרגיל הבא'}.`, action: '', apply: () => undefined };
   const effortChoices = [{ value: 4, emoji: '😄', label: 'קל' }, { value: 6, emoji: '🙂', label: 'נוח' }, { value: 7, emoji: '😐', label: 'בינוני' }, { value: 8, emoji: '😣', label: 'קשה' }, { value: 10, emoji: '🥵', label: 'מקסימלי' }];
   function speakCoach(message: string) {
     if (!coachEnabled || typeof window === 'undefined' || !('speechSynthesis' in window)) return;
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(message);
-    utterance.lang = 'he-IL'; utterance.rate = 1.03; utterance.volume = 0.9;
+    const voices = window.speechSynthesis.getVoices();
+    utterance.voice = voices.find((voice) => voice.lang.toLowerCase().startsWith('he')) || voices.find((voice) => voice.lang.toLowerCase().startsWith('en')) || null;
+    utterance.lang = utterance.voice?.lang || 'he-IL'; utterance.rate = 0.92; utterance.pitch = 1; utterance.volume = 0.88;
     window.speechSynthesis.speak(utterance);
   }
   function toggleCoach() {
@@ -530,7 +545,7 @@ function WorkoutScreen({ workoutId, workoutStartedAt, plan, exercise, completedS
     if (!next && typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel();
   }
   useEffect(() => { setCoachEnabled(localStorage.getItem('flowfit-workout-coach') === 'on'); }, []);
-  useEffect(() => { if (coachEnabled) speakCoach(`התרגיל הנוכחי הוא ${exercise.name}. ${guide.cues[0]}`); }, [coachEnabled, exercise.id]);
+  useEffect(() => { if (coachEnabled) speakCoach(`אוקיי, עוברים ל${exercise.name}. היעד הוא ${sessionSets} סטים של ${reps} חזרות${isBodyweight ? ', במשקל גוף' : `, עם ${weight} קילוגרם`}. ${guide.cues[0]}. ${guide.cues[1]}`); }, [coachEnabled, exercise.id]);
   useEffect(() => {
     try { const saved = localStorage.getItem(draftKey); if (saved) { const draft = JSON.parse(saved) as WorkoutDraft; setWeight(draft.weight); setReps(draft.reps); setSessionSets(draft.sessionSets); setNote(draft.note || ''); setTimerMode(draft.timerMode || 'set'); setPhaseStartedAt(draft.phaseStartedAt || Date.now()); setSavedSets(draft.savedSets || []); setCompletedSets(draft.savedSets?.length || 0); } }
     catch { localStorage.removeItem(draftKey); }
@@ -538,7 +553,7 @@ function WorkoutScreen({ workoutId, workoutStartedAt, plan, exercise, completedS
   }, [draftKey]);
   useEffect(() => { if (draftReady) localStorage.setItem(draftKey, JSON.stringify({ weight, reps, sessionSets, note, timerMode, phaseStartedAt, savedSets } satisfies WorkoutDraft)); }, [draftKey, draftReady, note, phaseStartedAt, reps, savedSets, sessionSets, timerMode, weight]);
   useEffect(() => { const interval = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(interval); }, []);
-  useEffect(() => { if (timerMode === 'rest' && restRemaining === 0) { speakCoach(`המנוחה הסתיימה. אפשר להתחיל את הסט הבא של ${exercise.name}.`); setTimerMode('set'); setPhaseStartedAt(Date.now()); } }, [restRemaining, timerMode]);
+  useEffect(() => { if (timerMode === 'rest' && restRemaining === 0) { speakCoach(`המנוחה הסתיימה. קח נשימה, התארגן, ובסט הבא תזכור: ${guide.cues[Math.min(completedSets, guide.cues.length - 1)]}`); setTimerMode('set'); setPhaseStartedAt(Date.now()); } }, [restRemaining, timerMode]);
   useEffect(() => {
     let active = true;
     setHistoryState('loading');
@@ -566,7 +581,8 @@ function WorkoutScreen({ workoutId, workoutStartedAt, plan, exercise, completedS
       setNote('');
       setTimerMode('rest');
       setPhaseStartedAt(Date.now());
-      speakCoach(nextCompleted >= sessionSets ? `סיימת את ${exercise.name}. התרגיל הבא הוא ${nextExercise?.name || 'התרגיל הבא'}.` : `סט ${nextCompleted} נשמר. תנוח תשעים שניות. ${rpe >= 9 ? 'המאמץ גבוה, כדאי להוריד מעט עומס בסט הבא.' : rpe <= 6 ? 'הסט היה בשליטה.' : 'שמור על אותה טכניקה.'}`);
+      const effortFeedback = rpe >= 9 ? (isBodyweight ? hardBodyweightTip : 'זה היה קרוב למקסימום. הורד מעט משקל בסט הבא.') : rpe <= 6 ? (isBodyweight ? easyBodyweightTip : 'הסט היה בשליטה. אפשר להוסיף מעט משקל אם הטכניקה נשארת נקייה.') : `עצימות טובה. בסט הבא תתמקד בזה: ${guide.cues[Math.min(nextCompleted, guide.cues.length - 1)]}`;
+      speakCoach(nextCompleted >= sessionSets ? `יפה, סיימת את ${exercise.name}. קח רגע להתאושש. התרגיל הבא הוא ${nextExercise?.name || 'התרגיל הבא'}.` : `יופי, סט ${nextCompleted} נשמר. עכשיו תשעים שניות מנוחה. ${effortFeedback}`);
     } catch { setSaveState('error'); }
   }
   return <div className="mx-auto max-w-2xl"><Card className="overflow-hidden border-0 bg-card p-0 shadow-[0_18px_50px_rgba(0,0,0,.22)]">
