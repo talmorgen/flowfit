@@ -15,9 +15,9 @@ import sync
 
 
 TOKEN_DIR = Path(os.getenv("GARMIN_TOKEN_DIR", "/data/garmin-tokens"))
-SYNC_API_KEY = os.environ["SYNC_API_KEY"]
-FLOWFIT_ENDPOINT = os.environ["FLOWFIT_ENDPOINT"]
-FLOWFIT_SECRET = os.environ["FLOWFIT_SECRET"]
+SYNC_API_KEY = os.getenv("SYNC_API_KEY", "")
+FLOWFIT_ENDPOINT = os.getenv("FLOWFIT_ENDPOINT", "")
+FLOWFIT_SECRET = os.getenv("FLOWFIT_SECRET", "")
 SYNC_DAYS = max(1, min(90, int(os.getenv("SYNC_DAYS", "14"))))
 
 app = FastAPI(title="FlowFit Garmin Sync", docs_url=None, redoc_url=None)
@@ -25,6 +25,8 @@ sync_lock = asyncio.Lock()
 
 
 def authorize(authorization: str | None) -> None:
+    if not SYNC_API_KEY or not FLOWFIT_ENDPOINT or not FLOWFIT_SECRET:
+        raise HTTPException(status_code=503, detail="service_not_configured")
     if authorization != f"Bearer {SYNC_API_KEY}":
         raise HTTPException(status_code=401, detail="unauthorized")
 
@@ -44,7 +46,7 @@ def run_sync() -> dict[str, object]:
 
 @app.get("/health")
 def health() -> dict[str, bool]:
-    return {"ok": True}
+    return {"ok": True, "configured": bool(SYNC_API_KEY and FLOWFIT_ENDPOINT and FLOWFIT_SECRET)}
 
 
 @app.post("/sync")
