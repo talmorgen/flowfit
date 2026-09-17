@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Activity, ArrowDown, ArrowRight, ArrowUp, CalendarDays, Check, ChevronLeft, Dumbbell, ExternalLink, Footprints, HeartPulse, Mic, Minus, Music2, Pencil, Plus, RefreshCw, Save, Sparkles, Target, Timer, Trash2, TrendingUp, Waves } from 'lucide-react';
+import { Activity, ArrowDown, ArrowRight, ArrowUp, Bot, CalendarDays, Check, ChevronLeft, Dumbbell, ExternalLink, Footprints, HeartPulse, Mic, Minus, Music2, Pencil, Plus, RefreshCw, Save, Send, Sparkles, Target, Timer, Trash2, TrendingUp, Waves } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -199,6 +199,10 @@ function Dashboard({ plans, onPlans, onStart }: { plans: Plan[]; onPlans: () => 
   const [activityMatches, setActivityMatches] = useState<Record<string, string>>({});
   const [todayChoice, setTodayChoice] = useState('recommended');
   const [waveForecast, setWaveForecast] = useState<Array<{ date: string; height: number; period: number; direction: number }>>([]);
+  const [coachOpen, setCoachOpen] = useState(false);
+  const [coachInput, setCoachInput] = useState('');
+  const [coachLoading, setCoachLoading] = useState(false);
+  const [coachMessages, setCoachMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([{ role: 'assistant', content: 'היי טל, אני מאמן ה־AI שלך. אני יכול לעבור על האימון האחרון, להשוות לתוכניות שלך ולהציע מה לעשות היום.' }]);
   useEffect(() => { fetch('/api/sheets').then((response) => response.json() as Promise<{ ok: boolean; sets?: unknown[]; workouts?: unknown[] }>).then((data) => { if (!data.ok) throw new Error(); setRecordCount(data.sets?.length ?? data.workouts?.length ?? 0); setSheetState('connected'); }).catch(() => setSheetState('error')); }, []);
   async function loadGarmin() {
     const response = await fetch(`/api/sheets?source=garmin&t=${Date.now()}`, { cache: 'no-store' });
@@ -227,6 +231,20 @@ function Dashboard({ plans, onPlans, onStart }: { plans: Plan[]; onPlans: () => 
     } catch {
       setGarminSyncState('error');
     }
+  }
+  async function askCoach(prompt?: string) {
+    const message = (prompt || coachInput).trim();
+    if (!message || coachLoading) return;
+    const previous = coachMessages;
+    setCoachMessages([...previous, { role: 'user', content: message }]);
+    setCoachInput(''); setCoachLoading(true); setCoachOpen(true);
+    try {
+      const response = await fetch('/api/coach', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message, messages: previous, plans, garmin: { latestHealth: garmin.latestHealth, recentActivities: garmin.activities.slice(0, 14), activityMatches } }) });
+      const data = await response.json() as { ok?: boolean; answer?: string };
+      if (!response.ok || !data.ok || !data.answer) throw new Error();
+      setCoachMessages((current) => [...current, { role: 'assistant', content: data.answer! }]);
+    } catch { setCoachMessages((current) => [...current, { role: 'assistant', content: 'לא הצלחתי לנתח כרגע את הנתונים. נסה שוב בעוד רגע.' }]); }
+    finally { setCoachLoading(false); }
   }
   const health = garmin.latestHealth;
   const readiness = Number(health?.[12] || 0);
@@ -257,6 +275,7 @@ function Dashboard({ plans, onPlans, onStart }: { plans: Plan[]; onPlans: () => 
   return <div className="space-y-5">
     <div className="flex items-end justify-between gap-4"><div><p className="text-sm text-muted-foreground">{todayLabel}</p><h2 className="mt-1 text-3xl font-bold">בוקר טוב, טל</h2></div><span className={`rounded-full px-3 py-1.5 text-xs font-semibold ${sheetState === 'connected' ? 'bg-emerald-400/10 text-emerald-400' : sheetState === 'error' ? 'bg-red-400/10 text-red-400' : 'bg-muted text-muted-foreground'}`}>{sheetState === 'connected' ? `Google Sheets מחובר · ${recordCount} רשומות` : sheetState === 'error' ? 'שגיאת סנכרון' : 'מתחבר ל־Google Sheets…'}</span></div>
     <Card className="border-primary/25 bg-[linear-gradient(145deg,#153f49,#0a252d)] p-5 text-white"><div className="flex items-start justify-between gap-4"><div><p className="text-xs text-cyan-100/60">מה כדאי לעשות היום?</p><h3 className="mt-1 text-2xl font-bold">{recommendation.title}</h3><p className="mt-2 text-sm text-cyan-50/75">{recommendation.detail} · {recommendation.reason}</p></div><Target className="shrink-0 text-primary" size={28} /></div><div className="mt-5 flex gap-2 overflow-x-auto pb-1">{choices.map((choice) => <button key={choice.id} onClick={() => { setTodayChoice(choice.id); localStorage.setItem('flowfit-today-choice', choice.id); }} className={`flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold ${todayChoice === choice.id ? 'bg-primary text-primary-foreground' : 'bg-white/10 text-white'}`}>{choice.icon}{choice.label}</button>)}</div><p className="mt-3 text-[11px] text-cyan-50/50">הבחירה שלך להיום: <strong className="text-cyan-50/80">{todayTitle}</strong>. אפשר לשנות בכל רגע.</p></Card>
+    <Card className="overflow-hidden border-cyan-400/25 bg-card p-0"><button onClick={() => setCoachOpen((open) => !open)} className="flex w-full items-center justify-between p-5 text-right"><div className="flex items-center gap-3"><span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-cyan-400/10 text-cyan-300"><Bot size={23} /></span><div><p className="font-bold">מאמן AI אישי</p><p className="mt-1 text-xs text-muted-foreground">שאל על תרגילים, האימון האחרון ושינויים בתוכנית</p></div></div><span className="rounded-xl bg-primary/10 px-3 py-2 text-xs font-bold text-primary">{coachOpen ? 'סגירה' : 'התייעצות'}</span></button>{coachOpen && <div className="border-t border-border/70 p-4"><div className="max-h-80 space-y-3 overflow-y-auto rounded-2xl bg-muted/30 p-3">{coachMessages.map((message, index) => <div key={index} className={`max-w-[88%] rounded-2xl px-3 py-2 text-sm leading-6 ${message.role === 'assistant' ? 'mr-auto bg-cyan-400/10 text-foreground' : 'mr-0 bg-primary text-primary-foreground'}`}>{message.content}</div>)}{coachLoading && <div className="mr-auto max-w-[88%] rounded-2xl bg-cyan-400/10 px-3 py-2 text-sm text-muted-foreground">עובר על האימונים שלך…</div>}</div><div className="mt-3 flex gap-2 overflow-x-auto pb-1"><button onClick={() => askCoach('סקור את האימון האחרון שלי והצע שינויים אם צריך')} className="shrink-0 rounded-xl bg-muted px-3 py-2 text-xs font-semibold">סקור אימון אחרון</button><button onClick={() => askCoach('איזה אימון ותרגילים כדאי לי לעשות היום?')} className="shrink-0 rounded-xl bg-muted px-3 py-2 text-xs font-semibold">מה לעשות היום?</button><button onClick={() => askCoach('האם התוכניות שלי מאוזנות בין קבוצות השרירים?')} className="shrink-0 rounded-xl bg-muted px-3 py-2 text-xs font-semibold">בדיקת איזון</button></div><div className="mt-3 flex gap-2"><Input value={coachInput} onChange={(event) => setCoachInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') askCoach(); }} placeholder="שאל את המאמן…" className="h-12 flex-1 bg-muted/45" /><Button onClick={() => askCoach()} disabled={!coachInput.trim() || coachLoading} className="h-12 w-12 shrink-0 rounded-xl p-0" aria-label="שליחת שאלה"><Send size={18} /></Button></div><p className="mt-2 text-[10px] text-muted-foreground">המלצות אימון כלליות בלבד. במקרה של כאב או פציעה יש להתייעץ עם איש מקצוע.</p></div>}</Card>
     <div className="grid gap-5 lg:grid-cols-[1.25fr_.75fr]">
       <Card className="overflow-hidden border-0 bg-[linear-gradient(145deg,#153f49,#0a252d)] p-5 text-white"><div className="flex items-start justify-between"><div><p className="text-xs text-cyan-100/60">התוכנית שבחרת להיום</p><h3 className="mt-2 text-2xl font-bold">{todayTitle}</h3><p className="mt-2 text-sm text-cyan-50/65">{todayChoice === 'recommended' ? 'מבוסס על היסטוריית Garmin וההתאוששות' : 'בחירה ידנית שלך להיום'}</p></div>{todayChoice === 'surf' ? <Waves className="text-cyan-300" size={28} /> : todayChoice === 'run' ? <Footprints className="text-orange-400" size={28} /> : <Dumbbell className="text-primary" size={28} />}</div><div className="mt-6 flex gap-3">{!recoveryDay && todayChoice !== 'surf' && todayChoice !== 'rest' && todayChoice !== 'run' && <Button onClick={() => onStart(selectedPlanChoice?.id || strengthPlans.find((plan) => plan.name === recommendation.title)?.id || strengthPlans[0]?.id || 1)} className="flex-1 font-bold">התחלת אימון</Button>}<button onClick={onPlans} className="flex-1 rounded-xl bg-white/10 px-4 py-2 text-sm font-semibold">פתיחת תוכניות</button></div></Card>
       <Card className="border-border/70 bg-card p-5"><div className="flex items-center justify-between"><div className="flex items-center gap-3"><span className="rounded-xl bg-cyan-400/10 p-2.5 text-cyan-400"><Waves size={22} /></span><div><p className="font-bold">תחזית גלים · בית ינאי</p><p className="text-xs text-muted-foreground">היום ועוד 3 ימים</p></div></div></div><div className="mt-4 grid grid-cols-2 gap-2">{waveForecast.length ? waveForecast.map((day, index) => <div key={day.date} className="rounded-xl bg-muted/55 p-3"><p className="text-[11px] text-muted-foreground">{index === 0 ? 'היום' : new Intl.DateTimeFormat('he-IL', { weekday: 'short' }).format(new Date(`${day.date}T12:00:00`))}</p><strong className="mt-1 block text-lg">{day.height.toFixed(1)} מ׳</strong><p className="mt-1 text-[10px] text-muted-foreground">מחזור {day.period.toFixed(0)} שנ׳ · {Math.round(day.direction)}°</p></div>) : <p className="col-span-2 py-5 text-center text-xs text-muted-foreground">טוען תחזית ימית…</p>}</div><p className="mt-3 text-[10px] text-muted-foreground">מקור: Open-Meteo Marine Weather API</p></Card>
