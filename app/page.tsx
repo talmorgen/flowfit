@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Activity, ArrowDown, ArrowRight, ArrowUp, Bot, CalendarDays, Check, ChevronLeft, Dumbbell, ExternalLink, Footprints, HeartPulse, Mic, Minus, Music2, Pencil, Plus, RefreshCw, Save, Send, Sparkles, Target, Timer, Trash2, TrendingUp, Waves } from 'lucide-react';
+import { Activity, ArrowDown, ArrowRight, ArrowUp, Bot, CalendarDays, Check, ChevronLeft, Dumbbell, ExternalLink, Footprints, HeartPulse, Mic, Minus, Music2, Pencil, Plus, RefreshCw, Save, Send, Sparkles, Target, Timer, Trash2, TrendingUp, Volume2, VolumeX, Waves } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -508,11 +508,29 @@ function WorkoutScreen({ workoutId, workoutStartedAt, plan, exercise, completedS
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [lastSet, setLastSet] = useState<{ reps: number; weightKg: number; timestamp: string } | null>(null);
   const [historyState, setHistoryState] = useState<'loading' | 'found' | 'empty'>('loading');
+  const [coachEnabled, setCoachEnabled] = useState(false);
   const guide = guideForExercise(exercise.name);
   const draftKey = `flowfit-workout-draft:${workoutId}:${exercise.id}`;
   const elapsedSeconds = Math.max(0, Math.floor((now - phaseStartedAt) / 1000));
   const restRemaining = Math.max(0, REST_SECONDS - elapsedSeconds);
+  const exerciseIndex = plan.exercises.findIndex((item) => item.id === exercise.id);
+  const nextExercise = plan.exercises[(exerciseIndex + 1) % plan.exercises.length];
+  const coachAdvice = rpe >= 9 ? { text: 'המאמץ גבוה. מומלץ להוריד מעט משקל או חזרה אחת בסט הבא.', action: 'הורד 2.5 ק״ג', apply: () => setWeight(Math.max(0, weight - 2.5)) } : rpe <= 6 && completedSets > 0 ? { text: 'הסט הרגיש בשליטה. אפשר להוסיף מעט משקל כל עוד הטכניקה נשארת נקייה.', action: 'הוסף 2.5 ק״ג', apply: () => setWeight(weight + 2.5) } : { text: `שמור על הטכניקה. אחרי ${exercise.name} נעבור ל־${nextExercise?.name || 'התרגיל הבא'}.`, action: '', apply: () => undefined };
   const effortChoices = [{ value: 4, emoji: '😄', label: 'קל' }, { value: 6, emoji: '🙂', label: 'נוח' }, { value: 7, emoji: '😐', label: 'בינוני' }, { value: 8, emoji: '😣', label: 'קשה' }, { value: 10, emoji: '🥵', label: 'מקסימלי' }];
+  function speakCoach(message: string) {
+    if (!coachEnabled || typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(message);
+    utterance.lang = 'he-IL'; utterance.rate = 1.03; utterance.volume = 0.9;
+    window.speechSynthesis.speak(utterance);
+  }
+  function toggleCoach() {
+    const next = !coachEnabled;
+    setCoachEnabled(next); localStorage.setItem('flowfit-workout-coach', next ? 'on' : 'off');
+    if (!next && typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+  }
+  useEffect(() => { setCoachEnabled(localStorage.getItem('flowfit-workout-coach') === 'on'); }, []);
+  useEffect(() => { if (coachEnabled) speakCoach(`התרגיל הנוכחי הוא ${exercise.name}. ${guide.cues[0]}`); }, [coachEnabled, exercise.id]);
   useEffect(() => {
     try { const saved = localStorage.getItem(draftKey); if (saved) { const draft = JSON.parse(saved) as WorkoutDraft; setWeight(draft.weight); setReps(draft.reps); setSessionSets(draft.sessionSets); setNote(draft.note || ''); setTimerMode(draft.timerMode || 'set'); setPhaseStartedAt(draft.phaseStartedAt || Date.now()); setSavedSets(draft.savedSets || []); setCompletedSets(draft.savedSets?.length || 0); } }
     catch { localStorage.removeItem(draftKey); }
@@ -520,7 +538,7 @@ function WorkoutScreen({ workoutId, workoutStartedAt, plan, exercise, completedS
   }, [draftKey]);
   useEffect(() => { if (draftReady) localStorage.setItem(draftKey, JSON.stringify({ weight, reps, sessionSets, note, timerMode, phaseStartedAt, savedSets } satisfies WorkoutDraft)); }, [draftKey, draftReady, note, phaseStartedAt, reps, savedSets, sessionSets, timerMode, weight]);
   useEffect(() => { const interval = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(interval); }, []);
-  useEffect(() => { if (timerMode === 'rest' && restRemaining === 0) { setTimerMode('set'); setPhaseStartedAt(Date.now()); } }, [restRemaining, timerMode]);
+  useEffect(() => { if (timerMode === 'rest' && restRemaining === 0) { speakCoach(`המנוחה הסתיימה. אפשר להתחיל את הסט הבא של ${exercise.name}.`); setTimerMode('set'); setPhaseStartedAt(Date.now()); } }, [restRemaining, timerMode]);
   useEffect(() => {
     let active = true;
     setHistoryState('loading');
@@ -548,6 +566,7 @@ function WorkoutScreen({ workoutId, workoutStartedAt, plan, exercise, completedS
       setNote('');
       setTimerMode('rest');
       setPhaseStartedAt(Date.now());
+      speakCoach(nextCompleted >= sessionSets ? `סיימת את ${exercise.name}. התרגיל הבא הוא ${nextExercise?.name || 'התרגיל הבא'}.` : `סט ${nextCompleted} נשמר. תנוח תשעים שניות. ${rpe >= 9 ? 'המאמץ גבוה, כדאי להוריד מעט עומס בסט הבא.' : rpe <= 6 ? 'הסט היה בשליטה.' : 'שמור על אותה טכניקה.'}`);
     } catch { setSaveState('error'); }
   }
   return <div className="mx-auto max-w-2xl"><Card className="overflow-hidden border-0 bg-card p-0 shadow-[0_18px_50px_rgba(0,0,0,.22)]">
@@ -555,6 +574,7 @@ function WorkoutScreen({ workoutId, workoutStartedAt, plan, exercise, completedS
       <div className="flex items-center justify-between gap-4"><div><p className="text-xs text-cyan-100/60">{plan.name} · תרגיל נוכחי</p><h2 className="mt-1 text-3xl font-bold">{exercise.name}</h2></div><div className="flex gap-2"><button onClick={onSwitch} className="rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold">החלפה</button><button onClick={onNext} className="flex items-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-xs font-bold text-primary-foreground">לתרגיל הבא<ChevronLeft size={15} /></button></div></div>
     </div>
     <div className="p-5">
+      <div className="mb-5 rounded-2xl border border-cyan-400/25 bg-cyan-400/5 p-4"><div className="flex items-center gap-3"><button type="button" onClick={toggleCoach} className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full ${coachEnabled ? 'bg-cyan-300 text-slate-950 shadow-[0_0_24px_rgba(34,211,238,.3)]' : 'bg-muted text-muted-foreground'}`} aria-label={coachEnabled ? 'כיבוי המאמן הקולי' : 'הפעלת המאמן הקולי'}>{coachEnabled ? <Volume2 size={22} /> : <VolumeX size={22} />}</button><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2"><p className="font-bold">מאמן קולי בזמן האימון</p><span className={`text-[10px] font-bold ${coachEnabled ? 'text-cyan-300' : 'text-muted-foreground'}`}>{coachEnabled ? 'פעיל' : 'כבוי'}</span></div><p className="mt-1 text-xs leading-5 text-muted-foreground">הנחיות קצרות בלבד, כדי שהמוזיקה תמשיך בין העדכונים.</p></div></div><div className="mt-3 rounded-xl bg-black/15 p-3"><p className="text-xs leading-5">{coachAdvice.text}</p>{coachAdvice.action && <button type="button" onClick={() => { coachAdvice.apply(); speakCoach(`${coachAdvice.action} בוצע.`); }} className="mt-2 rounded-lg bg-primary/12 px-3 py-2 text-[11px] font-bold text-primary">{coachAdvice.action}</button>}</div></div>
       <details className="group mb-5 rounded-2xl border border-cyan-400/15 bg-cyan-400/5"><summary className="flex cursor-pointer list-none items-center gap-3 p-3"><div className="h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-white/90">{guide.gif ? <img src={`https://raw.githubusercontent.com/mohamedatef90/exercise-library/main/gifs/${guide.gif}`} alt={`הדגמה של ${exercise.name}`} className="h-full w-full object-cover" /> : <Dumbbell className="m-4 text-cyan-700" size={24} />}</div><div className="min-w-0 flex-1"><p className="text-[11px] text-cyan-300">איך לבצע נכון</p><h3 className="truncate text-sm font-bold">דגשים ל־{exercise.name}</h3><p className="mt-1 text-[10px] text-muted-foreground">לחץ לפתיחת ההנחיות</p></div><ChevronLeft className="text-cyan-300 transition-transform group-open:-rotate-90" size={18} /></summary><div className="border-t border-cyan-400/10 px-4 pb-4 pt-3"><ul className="space-y-2 text-xs leading-5 text-muted-foreground">{guide.cues.map((cue) => <li key={cue} className="flex gap-2"><span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />{cue}</li>)}</ul><a href={`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(guide.search)}`} target="_blank" rel="noreferrer" className="mt-3 flex items-center justify-center gap-1.5 rounded-xl bg-cyan-400/10 px-3 py-2 text-xs font-semibold text-cyan-300">עוד הדגמות בתמונות<ExternalLink size={14} /></a><p className="mt-2 text-center text-[9px] text-muted-foreground">GIF: open-source exercise-library</p></div></details>
       <div className="mb-3 flex items-center justify-between rounded-xl bg-muted/45 px-3 py-2 text-xs"><span className="text-muted-foreground">הביצוע האחרון</span><strong>{historyState === 'loading' ? 'טוען…' : lastSet ? `${lastSet.weightKg} ק״ג × ${lastSet.reps} חזרות` : 'עדיין לא תועד'}</strong></div>
       <div className="mb-5 grid grid-cols-[1fr_auto_1fr] items-center gap-3"><BigStepper label="משקל" value={weight} suffix="ק״ג" onMinus={() => setWeight(Math.max(0, weight - 2.5))} onPlus={() => setWeight(weight + 2.5)} /><span className="pt-6 text-xl text-muted-foreground">×</span><BigStepper label="חזרות" value={reps} onMinus={() => setReps(Math.max(1, reps - 1))} onPlus={() => setReps(reps + 1)} /></div>
