@@ -6,11 +6,14 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { baseExerciseBank, exerciseExists, mergeExerciseBank, type BankExercise } from '@/lib/exercise-bank';
 
 type Exercise = { id: number; name: string; sets: number; reps: number; weight: number | null; note?: string };
 type Plan = { id: number; name: string; subtitle: string; accent: string; exercises: Exercise[]; kind?: 'strength' | 'run'; distanceKm?: number; targetPace?: string };
 type Screen = 'dashboard' | 'plans' | 'new-plan' | 'choose' | 'workout';
 type ActiveWorkoutSession = { workoutId: string; planId: number; exerciseId: number; completedSets: number; rpe: number; screen: 'choose' | 'workout'; startedAt: string; updatedAt: string };
+type PlannedActivityType = 'surf' | 'strength' | 'run' | 'swim' | 'rest';
+type PlannedActivity = { date: string; type: PlannedActivityType; planId?: number };
 
 const ACTIVE_WORKOUT_KEY = 'flowfit-active-workout';
 
@@ -51,12 +54,20 @@ export default function Home() {
   const [workoutId, setWorkoutId] = useState('');
   const [workoutStartedAt, setWorkoutStartedAt] = useState('');
   const [sessionReady, setSessionReady] = useState(false);
+  const [exerciseBank, setExerciseBank] = useState<BankExercise[]>(baseExerciseBank);
+  const [exerciseBankReady, setExerciseBankReady] = useState(false);
 
   const selectedPlan = plans.find((plan) => plan.id === selectedPlanId)!;
   const activeExercise = selectedPlan.exercises.find((exercise) => exercise.id === activeExerciseId) ?? selectedPlan.exercises[0];
 
   useEffect(() => { try { const saved = localStorage.getItem('flowfit-plans'); if (saved) { const parsed = JSON.parse(saved) as Plan[]; if (parsed.length) { setPlans(parsed); setSelectedPlanId(parsed[0].id); } } } catch { /* keep defaults */ } finally { setPlansReady(true); } }, []);
   useEffect(() => { if (plansReady) localStorage.setItem('flowfit-plans', JSON.stringify(plans)); }, [plans, plansReady]);
+  useEffect(() => {
+    try { setExerciseBank(mergeExerciseBank(JSON.parse(localStorage.getItem('flowfit-exercise-bank') || '[]') as BankExercise[])); }
+    catch { setExerciseBank(baseExerciseBank); }
+    finally { setExerciseBankReady(true); }
+  }, []);
+  useEffect(() => { if (exerciseBankReady) localStorage.setItem('flowfit-exercise-bank', JSON.stringify(exerciseBank)); }, [exerciseBank, exerciseBankReady]);
   useEffect(() => {
     if (!plansReady || sessionReady) return;
     try {
@@ -119,6 +130,10 @@ export default function Home() {
     } : plan));
   }
 
+  function addExerciseToBank(item: BankExercise) {
+    setExerciseBank((current) => exerciseExists(current, item.name) ? current : [...current, item]);
+  }
+
   function createPlan(plan: Plan) {
     setPlans((current) => [...current, plan]);
     setSelectedPlanId(plan.id);
@@ -136,13 +151,13 @@ export default function Home() {
 
   function generateComplementaryPlan() {
     const existingNames = new Set(plans.flatMap((plan) => plan.exercises.map((exercise) => exercise.name)));
-    const categories = ['legs', 'hinge', 'pull', 'push', 'shoulders', 'core'];
-    const categoryCounts = Object.fromEntries(categories.map((category) => [category, recommendedExercises.filter((item) => item.category === category && existingNames.has(item.name)).length]));
+    const categories: BankExercise['category'][] = ['legs', 'hinge', 'pull', 'push', 'shoulders', 'core'];
+    const categoryCounts = Object.fromEntries(categories.map((category) => [category, exerciseBank.filter((item) => item.category === category && existingNames.has(item.name)).length]));
     const selected = categories.sort((a, b) => categoryCounts[a] - categoryCounts[b]).flatMap((category) => {
-      const options = recommendedExercises.filter((item) => item.category === category && !existingNames.has(item.name));
-      return (options.length ? options : recommendedExercises.filter((item) => item.category === category)).slice(0, 1);
+      const options = exerciseBank.filter((item) => item.category === category && !existingNames.has(item.name));
+      return (options.length ? options : exerciseBank.filter((item) => item.category === category)).slice(0, 1);
     });
-    for (const item of recommendedExercises) if (selected.length < 8 && !selected.some((choice) => choice.name === item.name) && !existingNames.has(item.name)) selected.push(item);
+    for (const item of exerciseBank) if (selected.length < 8 && !selected.some((choice) => choice.name === item.name) && !existingNames.has(item.name)) selected.push(item);
     const id = Date.now();
     const plan: Plan = { id, name: `אימון משלים ${plans.filter((item) => item.kind !== 'run').length + 1}`, subtitle: `נוצר אוטומטית · ${selected.length} תרגילים`, accent: 'cyan', kind: 'strength', exercises: selected.map((item, index) => ({ id: id + index + 1, name: item.name, sets: item.sets, reps: item.reps, weight: item.weight })) };
     setPlans((current) => [...current, plan]); setSelectedPlanId(id); setEditing(true); setScreen('plans');
@@ -163,7 +178,7 @@ export default function Home() {
 
       <div className="mx-auto max-w-5xl px-4 py-5">
         {screen === 'dashboard' && <Dashboard plans={plans} onPlans={() => setScreen('plans')} onStart={(planId) => { setSelectedPlanId(planId); setScreen('choose'); }} />}
-        {screen === 'plans' && <PlansScreen plans={plans} selectedPlan={selectedPlan} selectedPlanId={selectedPlanId} setSelectedPlanId={setSelectedPlanId} editing={editing} setEditing={setEditing} updateExercise={updateExercise} updateRunPlan={updateRunPlan} removeExercise={removeExercise} moveExercise={moveExercise} renameExercise={renameExercise} addExercise={addExercise} deletePlan={deletePlan} generateComplementaryPlan={generateComplementaryPlan} setScreen={setScreen} />}
+        {screen === 'plans' && <PlansScreen plans={plans} selectedPlan={selectedPlan} selectedPlanId={selectedPlanId} setSelectedPlanId={setSelectedPlanId} editing={editing} setEditing={setEditing} updateExercise={updateExercise} updateRunPlan={updateRunPlan} removeExercise={removeExercise} moveExercise={moveExercise} renameExercise={renameExercise} addExercise={addExercise} exerciseBank={exerciseBank} addExerciseToBank={addExerciseToBank} deletePlan={deletePlan} generateComplementaryPlan={generateComplementaryPlan} setScreen={setScreen} />}
         {screen === 'new-plan' && <NewPlanScreen onCancel={() => setScreen('plans')} onCreate={createPlan} />}
         {screen === 'choose' && <ChooseScreen plan={selectedPlan} onChoose={(id) => { if (!workoutId) { setWorkoutId(crypto.randomUUID()); setWorkoutStartedAt(new Date().toISOString()); } setActiveExerciseId(id); setCompletedSets(0); setScreen('workout'); }} />}
         {screen === 'workout' && <WorkoutScreen key={`${workoutId}:${activeExercise.id}`} workoutId={workoutId} workoutStartedAt={workoutStartedAt} plan={selectedPlan} exercise={activeExercise} completedSets={completedSets} setCompletedSets={setCompletedSets} rpe={rpe} setRpe={setRpe} onSwitch={() => setScreen('choose')} onNext={() => { const index = selectedPlan.exercises.findIndex((item) => item.id === activeExercise.id); const next = selectedPlan.exercises[(index + 1) % selectedPlan.exercises.length]; setActiveExerciseId(next.id); setCompletedSets(0); }} />}
@@ -203,6 +218,7 @@ function Dashboard({ plans, onPlans, onStart }: { plans: Plan[]; onPlans: () => 
   const [coachInput, setCoachInput] = useState('');
   const [coachLoading, setCoachLoading] = useState(false);
   const [coachMessages, setCoachMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([{ role: 'assistant', content: 'היי טל, אני מאמן ה־AI שלך. אני יכול לעבור על האימון האחרון, להשוות לתוכניות שלך ולהציע מה לעשות היום.' }]);
+  const [plannedActivities, setPlannedActivities] = useState<PlannedActivity[]>([]);
   useEffect(() => { fetch('/api/sheets').then((response) => response.json() as Promise<{ ok: boolean; sets?: unknown[]; workouts?: unknown[] }>).then((data) => { if (!data.ok) throw new Error(); setRecordCount(data.sets?.length ?? data.workouts?.length ?? 0); setSheetState('connected'); }).catch(() => setSheetState('error')); }, []);
   async function loadGarmin() {
     const response = await fetch(`/api/sheets?source=garmin&t=${Date.now()}`, { cache: 'no-store' });
@@ -212,12 +228,19 @@ function Dashboard({ plans, onPlans, onStart }: { plans: Plan[]; onPlans: () => 
   }
   useEffect(() => { loadGarmin().catch(() => undefined); }, []);
   useEffect(() => { try { setActivityMatches(JSON.parse(localStorage.getItem('flowfit-garmin-matches') || '{}')); } catch { setActivityMatches({}); } }, []);
+  useEffect(() => { try { setPlannedActivities(JSON.parse(localStorage.getItem('flowfit-week-plan') || '[]')); } catch { setPlannedActivities([]); } }, []);
   useEffect(() => { setTodayChoice(localStorage.getItem('flowfit-today-choice') || 'recommended'); fetch('/api/waves').then((response) => response.json()).then((data: { daily?: { time?: string[]; wave_height_max?: number[]; wave_period_max?: number[]; wave_direction_dominant?: number[] } }) => { const daily = data.daily; if (!daily?.time) return; setWaveForecast(daily.time.map((date, index) => ({ date, height: Number(daily.wave_height_max?.[index] || 0), period: Number(daily.wave_period_max?.[index] || 0), direction: Number(daily.wave_direction_dominant?.[index] || 0) }))); }).catch(() => undefined); }, []);
   function saveActivityMatch(activityId: string, planName: string) {
     const next = { ...activityMatches };
     if (planName) next[activityId] = planName; else delete next[activityId];
     setActivityMatches(next);
     localStorage.setItem('flowfit-garmin-matches', JSON.stringify(next));
+  }
+  function savePlannedActivity(date: string, type: string) {
+    const next = plannedActivities.filter((item) => item.date !== date);
+    if (type) next.push({ date, type: type as PlannedActivityType });
+    setPlannedActivities(next);
+    localStorage.setItem('flowfit-week-plan', JSON.stringify(next));
   }
   async function syncGarminNow() {
     if (garminSyncState === 'syncing') return;
@@ -239,7 +262,7 @@ function Dashboard({ plans, onPlans, onStart }: { plans: Plan[]; onPlans: () => 
     setCoachMessages([...previous, { role: 'user', content: message }]);
     setCoachInput(''); setCoachLoading(true); setCoachOpen(true);
     try {
-      const response = await fetch('/api/coach', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message, messages: previous, plans, garmin: { latestHealth: garmin.latestHealth, recentActivities: garmin.activities.slice(0, 14), activityMatches } }) });
+      const response = await fetch('/api/coach', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message, messages: previous, plans, plannedActivities, garmin: { latestHealth: garmin.latestHealth, recentActivities: garmin.activities.slice(0, 14), activityMatches } }) });
       const data = await response.json() as { ok?: boolean; answer?: string; error?: string };
       if (!response.ok || !data.ok || !data.answer) {
         if (data.error?.toLowerCase().includes('no credits')) throw new Error('no_credits');
@@ -258,18 +281,40 @@ function Dashboard({ plans, onPlans, onStart }: { plans: Plan[]; onPlans: () => 
   const lastStrength = sortedActivities.find((activity) => activity[2] === 'strength_training' && activityMatches[activity[0]]);
   const lastMatchedPlan = lastStrength ? activityMatches[lastStrength[0]] : '';
   const nextStrengthPlan = lastMatchedPlan === 'Full Body A' ? 'Full Body B' : lastMatchedPlan === 'Full Body B' ? 'Full Body A' : strengthPlans[0]?.name || 'אימון כוח';
+  const today = new Date();
+  const todayKey = localDateKey(today);
+  const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+  const tomorrowKey = localDateKey(tomorrow);
+  const nextSevenDays = Array.from({ length: 7 }, (_, index) => { const date = new Date(today); date.setHours(0, 0, 0, 0); date.setDate(date.getDate() + index); return date; });
   const latestTime = sortedActivities[0] ? parseGarminDate(sortedActivities[0][1]).getTime() : 0;
   const recentSurf = sortedActivities.some((activity) => activity[2] === 'surfing_v2' && latestTime - parseGarminDate(activity[1]).getTime() <= 36 * 60 * 60 * 1000);
   const recoveryDay = (readiness > 0 && readiness < 45) || (sleepScore > 0 && sleepScore < 55) || (sleepHours > 0 && sleepHours < 5.5);
-  const recommendation = recoveryDay
+  const weekStart = new Date(today); weekStart.setHours(0, 0, 0, 0); weekStart.setDate(weekStart.getDate() - 6);
+  const weekActivities = sortedActivities.filter((activity) => parseGarminDate(activity[1]) >= weekStart);
+  const weeklyRunDone = weekActivities.some((activity) => activity[2] === 'running');
+  const plannedToday = plannedActivities.find((item) => item.date === todayKey);
+  const plannedTomorrow = plannedActivities.find((item) => item.date === tomorrowKey);
+  const surfPlannedSoon = plannedActivities.some((item) => item.type === 'surf' && item.date > todayKey && item.date <= localDateKey(nextSevenDays[4]));
+  const waveToday = waveForecast.find((item) => item.date === todayKey);
+  const waveTomorrow = waveForecast.find((item) => item.date === tomorrowKey);
+  const activityLabel = (type: PlannedActivityType) => type === 'surf' ? 'גלישה' : type === 'run' ? 'ריצה' : type === 'swim' ? 'שחייה' : type === 'rest' ? 'מנוחה' : nextStrengthPlan;
+  const recommendation = plannedToday
+    ? { title: activityLabel(plannedToday.type), detail: plannedToday.type === 'strength' ? `${surfPlannedSoon ? 'אימון כוח מותאם · פחות סט אחד לרגליים' : 'אימון כוח מלא'} · עומס בינוני` : 'הפעילות שתכננת להיום', reason: 'נשמרה בתוכנית השבועית שלך' }
+    : waveToday && waveToday.height >= 0.8
+      ? { title: 'גלישה', detail: `${waveToday.height.toFixed(1)} מ׳ · מחזור ${waveToday.period.toFixed(0)} שנ׳`, reason: 'חלון גלישה טוב בבית ינאי' }
+      : recoveryDay
     ? { title: 'התאוששות פעילה', detail: 'הליכה קלה, מוביליטי או מנוחה מלאה', reason: readiness > 0 && readiness < 45 ? `מוכנות Garmin נמוכה (${readiness})` : `השינה האחרונה נמוכה מהיעד` }
-    : { title: nextStrengthPlan, detail: recentSurf ? 'אימון כוח מקוצר · פחות סט אחד בתרגילי משיכה' : 'אימון כוח מלא · עומס בינוני', reason: lastMatchedPlan ? `האימון האחרון שויך ל־${lastMatchedPlan}` : 'אין עדיין אימון כוח משויך ב־7 הימים האחרונים' };
+    : { title: nextStrengthPlan, detail: recentSurf ? 'אימון כוח מקוצר · פחות סט אחד בתרגילי משיכה' : surfPlannedSoon ? 'אימון כוח מותאם · פחות סט אחד לרגליים' : 'אימון כוח מלא · עומס בינוני', reason: surfPlannedSoon ? 'נשמרה גלישה בהמשך השבוע' : lastMatchedPlan ? `האימון האחרון שויך ל־${lastMatchedPlan}` : 'אין עדיין אימון כוח משויך ב־7 הימים האחרונים' };
+  const tomorrowRecommendation = plannedTomorrow
+    ? { title: activityLabel(plannedTomorrow.type), detail: 'לפי התכנון ששמרת' }
+    : waveTomorrow && waveTomorrow.height >= 0.8
+      ? { title: 'גלישה', detail: `${waveTomorrow.height.toFixed(1)} מ׳ · אם התנאים נשמרים` }
+      : !weeklyRunDone && !plannedActivities.some((item) => item.type === 'run' && item.date >= todayKey)
+        ? { title: 'ריצת בסיס', detail: '25–35 דקות · קצב קל' }
+        : { title: nextStrengthPlan, detail: surfPlannedSoon ? 'נפח רגליים מופחת לקראת גלישה' : 'עומס בינוני' };
   const choices = [{ id: 'recommended', label: 'לפי ההמלצה', icon: <Target size={17} /> }, { id: 'surf', label: 'גלישה', icon: <Waves size={17} /> }, { id: 'run', label: 'ריצה', icon: <Footprints size={17} /> }, ...strengthPlans.map((plan) => ({ id: `plan:${plan.id}`, label: plan.name, icon: <Dumbbell size={17} /> })), { id: 'rest', label: 'מנוחה', icon: <HeartPulse size={17} /> }];
   const selectedPlanChoice = todayChoice.startsWith('plan:') ? plans.find((plan) => plan.id === Number(todayChoice.slice(5))) : undefined;
   const todayTitle = todayChoice === 'recommended' ? recommendation.title : todayChoice === 'surf' ? 'גלישה' : todayChoice === 'run' ? plans.find((plan) => plan.kind === 'run')?.name || 'ריצה' : todayChoice === 'rest' ? 'מנוחה והתאוששות' : selectedPlanChoice?.name || recommendation.title;
-  const today = new Date();
-  const weekStart = new Date(today); weekStart.setHours(0, 0, 0, 0); weekStart.setDate(weekStart.getDate() - 6);
-  const weekActivities = sortedActivities.filter((activity) => parseGarminDate(activity[1]) >= weekStart);
   const weekMinutes = Math.round(weekActivities.reduce((sum, activity) => sum + (Number(activity[4]) || 0), 0));
   const weekDistance = weekActivities.reduce((sum, activity) => sum + (Number(activity[5]) || 0), 0);
   const weekLoad = Math.round(weekActivities.reduce((sum, activity) => sum + (Number(activity[11]) || 0), 0));
@@ -278,7 +323,9 @@ function Dashboard({ plans, onPlans, onStart }: { plans: Plan[]; onPlans: () => 
   return <div className="space-y-5">
     <div className="flex items-end justify-between gap-4"><div><p className="text-sm text-muted-foreground">{todayLabel}</p><h2 className="mt-1 text-3xl font-bold">בוקר טוב, טל</h2></div><span className={`rounded-full px-3 py-1.5 text-xs font-semibold ${sheetState === 'connected' ? 'bg-emerald-400/10 text-emerald-400' : sheetState === 'error' ? 'bg-red-400/10 text-red-400' : 'bg-muted text-muted-foreground'}`}>{sheetState === 'connected' ? `Google Sheets מחובר · ${recordCount} רשומות` : sheetState === 'error' ? 'שגיאת סנכרון' : 'מתחבר ל־Google Sheets…'}</span></div>
     <Card className="border-primary/25 bg-[linear-gradient(145deg,#153f49,#0a252d)] p-5 text-white"><div className="flex items-start justify-between gap-4"><div><p className="text-xs text-cyan-100/60">מה כדאי לעשות היום?</p><h3 className="mt-1 text-2xl font-bold">{recommendation.title}</h3><p className="mt-2 text-sm text-cyan-50/75">{recommendation.detail} · {recommendation.reason}</p></div><Target className="shrink-0 text-primary" size={28} /></div><div className="mt-5 flex gap-2 overflow-x-auto pb-1">{choices.map((choice) => <button key={choice.id} onClick={() => { setTodayChoice(choice.id); localStorage.setItem('flowfit-today-choice', choice.id); }} className={`flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold ${todayChoice === choice.id ? 'bg-primary text-primary-foreground' : 'bg-white/10 text-white'}`}>{choice.icon}{choice.label}</button>)}</div><p className="mt-3 text-[11px] text-cyan-50/50">הבחירה שלך להיום: <strong className="text-cyan-50/80">{todayTitle}</strong>. אפשר לשנות בכל רגע.</p></Card>
+    <Card className="border-cyan-400/25 bg-card p-4"><div className="flex items-center justify-between gap-4"><div><p className="text-xs text-muted-foreground">ההמלצה למחר</p><h3 className="mt-1 text-lg font-bold">{tomorrowRecommendation.title}</h3><p className="mt-1 text-xs text-muted-foreground">{tomorrowRecommendation.detail}</p></div><CalendarDays className="shrink-0 text-cyan-300" size={24} /></div></Card>
     <Card className="overflow-hidden border-cyan-400/25 bg-card p-0"><button onClick={() => setCoachOpen((open) => !open)} className="flex w-full items-center justify-between p-5 text-right"><div className="flex items-center gap-3"><span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-cyan-400/10 text-cyan-300"><Bot size={23} /></span><div><p className="font-bold">מאמן AI אישי</p><p className="mt-1 text-xs text-muted-foreground">שאל על תרגילים, האימון האחרון ושינויים בתוכנית</p></div></div><span className="rounded-xl bg-primary/10 px-3 py-2 text-xs font-bold text-primary">{coachOpen ? 'סגירה' : 'התייעצות'}</span></button>{coachOpen && <div className="border-t border-border/70 p-4"><div className="max-h-80 space-y-3 overflow-y-auto rounded-2xl bg-muted/30 p-3">{coachMessages.map((message, index) => <div key={index} className={`max-w-[88%] rounded-2xl px-3 py-2 text-sm leading-6 ${message.role === 'assistant' ? 'mr-auto bg-cyan-400/10 text-foreground' : 'mr-0 bg-primary text-primary-foreground'}`}>{message.content}</div>)}{coachLoading && <div className="mr-auto max-w-[88%] rounded-2xl bg-cyan-400/10 px-3 py-2 text-sm text-muted-foreground">עובר על האימונים שלך…</div>}</div><div className="mt-3 flex gap-2 overflow-x-auto pb-1"><button onClick={() => askCoach('סקור את האימון האחרון שלי והצע שינויים אם צריך')} className="shrink-0 rounded-xl bg-muted px-3 py-2 text-xs font-semibold">סקור אימון אחרון</button><button onClick={() => askCoach('איזה אימון ותרגילים כדאי לי לעשות היום?')} className="shrink-0 rounded-xl bg-muted px-3 py-2 text-xs font-semibold">מה לעשות היום?</button><button onClick={() => askCoach('האם התוכניות שלי מאוזנות בין קבוצות השרירים?')} className="shrink-0 rounded-xl bg-muted px-3 py-2 text-xs font-semibold">בדיקת איזון</button></div><div className="mt-3 flex gap-2"><Input value={coachInput} onChange={(event) => setCoachInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') askCoach(); }} placeholder="שאל את המאמן…" className="h-12 flex-1 bg-muted/45" /><Button onClick={() => askCoach()} disabled={!coachInput.trim() || coachLoading} className="h-12 w-12 shrink-0 rounded-xl p-0" aria-label="שליחת שאלה"><Send size={18} /></Button></div><p className="mt-2 text-[10px] text-muted-foreground">המלצות אימון כלליות בלבד. במקרה של כאב או פציעה יש להתייעץ עם איש מקצוע.</p></div>}</Card>
+    <Card className="border-border/70 bg-card p-5"><div className="flex items-center justify-between"><div><p className="text-xs text-muted-foreground">תכנון עתידי</p><h3 className="mt-1 font-bold">השבוע שלי</h3></div><CalendarDays size={21} className="text-primary" /></div><p className="mt-2 text-xs leading-5 text-muted-foreground">סמן גלישה, כוח, ריצה או שחייה. ההמלצות להיום ולמחר יתעדכנו מיד.</p><div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-7">{nextSevenDays.map((date, index) => { const dateKey = localDateKey(date); const plan = plannedActivities.find((item) => item.date === dateKey); const wave = waveForecast.find((item) => item.date === dateKey); return <label key={dateKey} className={`rounded-2xl border p-3 ${plan?.type === 'surf' ? 'border-cyan-300/60 bg-cyan-400/5' : plan ? 'border-primary/45 bg-primary/5' : 'border-border/70 bg-muted/20'}`}><span className="block text-xs font-bold">{index === 0 ? 'היום' : new Intl.DateTimeFormat('he-IL', { weekday: 'short' }).format(date)}</span><span className="mt-1 block text-[10px] text-muted-foreground">{date.getDate()}/{date.getMonth() + 1}{wave ? ` · ${wave.height.toFixed(1)} מ׳` : ''}</span><select aria-label={`תכנון ליום ${dateKey}`} value={plan?.type || ''} onChange={(event) => savePlannedActivity(dateKey, event.target.value)} className="mt-3 w-full rounded-lg border border-border bg-card px-1.5 py-2 text-[11px] text-foreground"><option value="">פתוח</option><option value="surf">גלישה</option><option value="strength">כוח</option><option value="run">ריצה</option><option value="swim">שחייה</option><option value="rest">מנוחה</option></select></label>; })}</div><p className="mt-3 text-[11px] text-muted-foreground">{weeklyRunDone ? '✓ הריצה השבועית הושלמה' : 'הריצה השבועית עדיין לא הושלמה — FlowFit ישמור לה מקום פנוי.'}</p></Card>
     <div className="grid gap-5 lg:grid-cols-[1.25fr_.75fr]">
       <Card className="overflow-hidden border-0 bg-[linear-gradient(145deg,#153f49,#0a252d)] p-5 text-white"><div className="flex items-start justify-between"><div><p className="text-xs text-cyan-100/60">התוכנית שבחרת להיום</p><h3 className="mt-2 text-2xl font-bold">{todayTitle}</h3><p className="mt-2 text-sm text-cyan-50/65">{todayChoice === 'recommended' ? 'מבוסס על היסטוריית Garmin וההתאוששות' : 'בחירה ידנית שלך להיום'}</p></div>{todayChoice === 'surf' ? <Waves className="text-cyan-300" size={28} /> : todayChoice === 'run' ? <Footprints className="text-orange-400" size={28} /> : <Dumbbell className="text-primary" size={28} />}</div><div className="mt-6 flex gap-3">{!recoveryDay && todayChoice !== 'surf' && todayChoice !== 'rest' && todayChoice !== 'run' && <Button onClick={() => onStart(selectedPlanChoice?.id || strengthPlans.find((plan) => plan.name === recommendation.title)?.id || strengthPlans[0]?.id || 1)} className="flex-1 font-bold">התחלת אימון</Button>}<button onClick={onPlans} className="flex-1 rounded-xl bg-white/10 px-4 py-2 text-sm font-semibold">פתיחת תוכניות</button></div></Card>
       <Card className="border-border/70 bg-card p-5"><div className="flex items-center justify-between"><div className="flex items-center gap-3"><span className="rounded-xl bg-cyan-400/10 p-2.5 text-cyan-400"><Waves size={22} /></span><div><p className="font-bold">תחזית גלים · בית ינאי</p><p className="text-xs text-muted-foreground">היום ועוד 3 ימים</p></div></div></div><div className="mt-4 grid grid-cols-2 gap-2">{waveForecast.length ? waveForecast.map((day, index) => <div key={day.date} className="rounded-xl bg-muted/55 p-3"><p className="text-[11px] text-muted-foreground">{index === 0 ? 'היום' : new Intl.DateTimeFormat('he-IL', { weekday: 'short' }).format(new Date(`${day.date}T12:00:00`))}</p><strong className="mt-1 block text-lg">{day.height.toFixed(1)} מ׳</strong><p className="mt-1 text-[10px] text-muted-foreground">מחזור {day.period.toFixed(0)} שנ׳ · {Math.round(day.direction)}°</p></div>) : <p className="col-span-2 py-5 text-center text-xs text-muted-foreground">טוען תחזית ימית…</p>}</div><p className="mt-3 text-[10px] text-muted-foreground">מקור: Open-Meteo Marine Weather API</p></Card>
@@ -301,32 +348,9 @@ function NewPlanScreen({ onCancel, onCreate }: { onCancel: () => void; onCreate:
   return <div className="mx-auto max-w-2xl"><Card className="border-border/70 bg-card p-5 sm:p-7"><div><p className="text-xs text-muted-foreground">שלב 1 מתוך 2</p><h2 className="mt-1 text-3xl font-bold">איזו תוכנית נבנה?</h2></div><div className="mt-6 grid grid-cols-2 gap-3"><button onClick={() => setKind('strength')} className={`rounded-2xl border p-5 text-right ${kind === 'strength' ? 'border-primary bg-primary/8' : 'border-border'}`}><Dumbbell className="text-primary" /><strong className="mt-3 block">אימון כוח</strong><span className="mt-1 block text-xs text-muted-foreground">תרגילים, סטים ומשקלים</span></button><button onClick={() => setKind('run')} className={`rounded-2xl border p-5 text-right ${kind === 'run' ? 'border-orange-400 bg-orange-400/8' : 'border-border'}`}><Footprints className="text-orange-400" /><strong className="mt-3 block">תוכנית ריצה</strong><span className="mt-1 block text-xs text-muted-foreground">מרחק, קצב ומשך</span></button></div><label className="mt-6 block text-sm font-semibold">שם התוכנית<Input value={name} onChange={(event) => setName(event.target.value)} placeholder={kind === 'run' ? 'למשל: ריצת בוקר' : 'למשל: Full Body C'} className="mt-2 h-12 bg-muted/45" /></label>{kind === 'run' && <div className="mt-5 grid grid-cols-2 gap-4"><label className="text-sm font-semibold">מרחק בק״מ<Input type="number" min="1" max="50" step="0.5" value={distance} onChange={(event) => setDistance(Number(event.target.value))} className="mt-2 h-12 bg-muted/45" /></label><label className="text-sm font-semibold">קצב יעד לק״מ<Input value={pace} onChange={(event) => setPace(event.target.value)} className="mt-2 h-12 bg-muted/45" /></label></div>}<div className="mt-7 flex gap-3"><Button onClick={submit} className="h-13 flex-1 font-bold">יצירת התוכנית</Button><button onClick={onCancel} className="rounded-xl bg-muted px-5 text-sm font-semibold">ביטול</button></div></Card></div>;
 }
 
-const recommendedExercises = [
-  { name: 'גובלט סקוואט', category: 'legs', description: 'רגליים, ליבה ויציבות — בסיס טוב לעמידה על הגלשן.', sets: 3, reps: 10, weight: 20, gif: 'yn8yg1r.gif' },
-  { name: 'סקוואט', category: 'legs', description: 'כוח רגליים מלא ויציבות תחת עומס.', sets: 3, reps: 7, weight: 70, gif: 'qXTaZnJ.gif' },
-  { name: "לאנג׳ / ספליט סקוואט", category: 'legs', description: 'כוח חד־צדדי, שיווי משקל ושליטה בברך.', sets: 3, reps: 10, weight: 10, gif: 'HBYyX94.gif' },
-  { name: 'Box Jump', category: 'legs', description: 'כוח מתפרץ ונחיתה יציבה לקימה מהירה.', sets: 4, reps: 4, weight: 0, gif: 'iPm26QU.gif' },
-  { name: 'דדליפט רומני', category: 'hinge', description: 'שרשרת אחורית והמסטרינג לשיפור כוח ויציבות.', sets: 3, reps: 8, weight: 50, gif: 'wQ2c4XD.gif' },
-  { name: 'דדליפט', category: 'hinge', description: 'כוח כללי לירך, גב וליבה.', sets: 3, reps: 6, weight: 70, gif: 'ila4NZS.gif' },
-  { name: 'Single Leg RDL', category: 'hinge', description: 'יציבות קרסול ואגן עם חיזוק שרשרת אחורית.', sets: 3, reps: 8, weight: 20, gif: 'gKozT8X.gif' },
-  { name: 'פולי עליון', category: 'pull', description: 'גב רחב וכוח משיכה שמסייע בחתירה.', sets: 3, reps: 10, weight: 40, gif: 'rkg41Fb.gif' },
-  { name: 'מתח', category: 'pull', description: 'כוח משיכה יחסי לגב ולזרועות.', sets: 3, reps: 5, weight: 0, gif: 'lBDjFxJ.gif' },
-  { name: 'חתירה הפוכה', category: 'pull', description: 'גב עליון ושכמות תוך שמירת גוף יציב.', sets: 3, reps: 10, weight: 0, gif: '4OaumBr.gif' },
-  { name: 'חתירה במכונה', category: 'pull', description: 'נפח משיכה נשלט לגב העליון.', sets: 3, reps: 10, weight: 45, gif: '7I6LNUG.gif' },
-  { name: 'לחיצת חזה במוט', category: 'push', description: 'כוח דחיפה לחזה, כתפיים ויד אחורית.', sets: 3, reps: 8, weight: 50, gif: 'EIeI8Vf.gif' },
-  { name: 'שכיבות סמיכה', category: 'push', description: 'חזה, כתפיים וליבה לקימה חזקה ויציבה.', sets: 3, reps: 12, weight: 0, gif: 'I4hDWkc.gif' },
-  { name: 'לחיצת כתפיים', category: 'push', description: 'כוח דחיפה מעל הראש ויציבות ליבה.', sets: 3, reps: 8, weight: 30, gif: 'znQUdHY.gif' },
-  { name: 'חתירת כתף אחורית בכבל', category: 'shoulders', description: 'שכמות וכתף אחורית לתמיכה בחתירה וביציבה.', sets: 3, reps: 12, weight: 15, gif: 'ZfyAGhK.gif' },
-  { name: 'הרחקות כתפיים', category: 'shoulders', description: 'חיזוק כתף צידית בשליטה.', sets: 3, reps: 12, weight: 7, gif: 'DsgkuIt.gif' },
-  { name: 'כפיפות מרפקים', category: 'shoulders', description: 'חיזוק זרוע קדמית כתוספת למשיכות.', sets: 2, reps: 12, weight: 8, gif: 'NbVPDMW.gif' },
-  { name: 'Pallof Press', category: 'core', description: 'ליבה אנטי־רוטציונית ויציבות בעמידה.', sets: 3, reps: 10, weight: 12, gif: '9pa4H5m.gif' },
-  { name: 'סיבוב בכבל', category: 'core', description: 'ליבה ושליטה בסיבוב הגוף.', sets: 3, reps: 12, weight: 12.5, gif: 'aVs3BR3.gif' },
-  { name: 'בטן', category: 'core', description: 'סבולת ליבה ושליטה באגן.', sets: 3, reps: 15, weight: 0, gif: '2gPfomN.gif' },
-];
-
-function PlansScreen({ plans, selectedPlan, selectedPlanId, setSelectedPlanId, editing, setEditing, updateExercise, updateRunPlan, removeExercise, moveExercise, renameExercise, addExercise, deletePlan, generateComplementaryPlan, setScreen }: {
+function PlansScreen({ plans, selectedPlan, selectedPlanId, setSelectedPlanId, editing, setEditing, updateExercise, updateRunPlan, removeExercise, moveExercise, renameExercise, addExercise, exerciseBank, addExerciseToBank, deletePlan, generateComplementaryPlan, setScreen }: {
   plans: Plan[]; selectedPlan: Plan; selectedPlanId: number; setSelectedPlanId: (id: number) => void; editing: boolean; setEditing: (value: boolean) => void;
-  updateExercise: (id: number, field: 'sets' | 'reps' | 'weight', delta: number) => void; updateRunPlan: (field: 'distanceKm' | 'targetPace', value: number | string) => void; removeExercise: (id: number) => void; moveExercise: (id: number, direction: -1 | 1) => void; renameExercise: (id: number, name: string) => void; addExercise: (exercise: Omit<Exercise, 'id'>) => void; deletePlan: (id: number) => void; generateComplementaryPlan: () => void; setScreen: (screen: Screen) => void;
+  updateExercise: (id: number, field: 'sets' | 'reps' | 'weight', delta: number) => void; updateRunPlan: (field: 'distanceKm' | 'targetPace', value: number | string) => void; removeExercise: (id: number) => void; moveExercise: (id: number, direction: -1 | 1) => void; renameExercise: (id: number, name: string) => void; addExercise: (exercise: Omit<Exercise, 'id'>) => void; exerciseBank: BankExercise[]; addExerciseToBank: (exercise: BankExercise) => void; deletePlan: (id: number) => void; generateComplementaryPlan: () => void; setScreen: (screen: Screen) => void;
 }) {
   const [showAddExercise, setShowAddExercise] = useState(false);
   const [newExerciseName, setNewExerciseName] = useState('');
@@ -338,16 +362,17 @@ function PlansScreen({ plans, selectedPlan, selectedPlanId, setSelectedPlanId, e
   const [galleryPage, setGalleryPage] = useState(0);
   const [deletePendingId, setDeletePendingId] = useState<number | null>(null);
   useEffect(() => setDeletePendingId(null), [selectedPlanId]);
-  const galleryItems = recommendedExercises.filter((item) => galleryCategory === 'all' || item.category === galleryCategory);
+  const galleryItems = exerciseBank.filter((item) => galleryCategory === 'all' || item.category === galleryCategory);
   const galleryPages = Math.ceil(galleryItems.length / 6);
   const visibleGalleryItems = galleryItems.slice(galleryPage * 6, galleryPage * 6 + 6);
-  function chooseSuggestion(suggestion: typeof recommendedExercises[number]) {
+  function chooseSuggestion(suggestion: BankExercise) {
     setPickedSuggestion(suggestion.name); setNewExerciseName(suggestion.name); setNewExerciseSets(suggestion.sets); setNewExerciseReps(suggestion.reps); setNewExerciseWeight(suggestion.weight);
   }
   function submitExercise() {
     const name = newExerciseName.trim();
     if (!name) return;
     addExercise({ name, sets: newExerciseSets, reps: newExerciseReps, weight: newExerciseWeight });
+    if (!exerciseExists(exerciseBank, name)) addExerciseToBank({ id: `user-${Date.now()}`, name, aliases: [], category: 'core', description: 'תרגיל שנוסף ידנית.', surfBenefit: 'טרם סווג', equipment: [], metric: 'reps', sets: newExerciseSets, reps: newExerciseReps, weight: newExerciseWeight, source: 'user' });
     setNewExerciseName(''); setNewExerciseSets(3); setNewExerciseReps(8); setNewExerciseWeight(0); setPickedSuggestion(''); setShowAddExercise(false);
   }
   return <div className="grid gap-5 lg:grid-cols-[300px_1fr]">
@@ -367,7 +392,7 @@ function PlansScreen({ plans, selectedPlan, selectedPlanId, setSelectedPlanId, e
           <Button onClick={() => setScreen('choose')} size="lg" className="mt-5 h-14 w-full rounded-2xl text-base font-bold"><Dumbbell className="ml-2" />התחלת {selectedPlan.name}</Button></>}
         </div>
       </Card>
-      {showAddExercise && <Card className="mt-4 border-primary/35 bg-card p-5"><div className="flex items-start justify-between gap-4"><div><p className="text-xs text-muted-foreground">תרגיל חדש ב־{selectedPlan.name}</p><h3 className="mt-1 text-xl font-bold">הוספת תרגיל</h3></div><button onClick={() => setShowAddExercise(false)} className="rounded-lg bg-muted px-3 py-2 text-xs font-semibold">סגירה</button></div><div className="mt-5"><div className="mb-3 flex items-center justify-between"><div><p className="text-sm font-bold">גלריית תרגילים · {recommendedExercises.length} אפשרויות</p><p className="mt-0.5 text-[11px] text-muted-foreground">בחר תרגיל כדי למלא את ערכי הפתיחה</p></div><Waves size={19} className="text-cyan-400" /></div><div className="mb-3 flex gap-2 overflow-x-auto pb-1">{[{ id: 'all', label: 'הכול' }, { id: 'legs', label: 'רגליים' }, { id: 'hinge', label: 'ירך אחורית' }, { id: 'pull', label: 'משיכה' }, { id: 'push', label: 'דחיפה' }, { id: 'shoulders', label: 'כתפיים' }, { id: 'core', label: 'ליבה' }].map((category) => <button key={category.id} onClick={() => { setGalleryCategory(category.id); setGalleryPage(0); }} className={`shrink-0 rounded-lg px-3 py-1.5 text-[11px] font-semibold ${galleryCategory === category.id ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>{category.label}</button>)}</div><div className="grid gap-2 sm:grid-cols-2">{visibleGalleryItems.map((suggestion) => <button key={suggestion.name} onClick={() => chooseSuggestion(suggestion)} className={`flex items-center gap-3 rounded-2xl border p-3 text-right transition ${pickedSuggestion === suggestion.name ? 'border-primary bg-primary/8' : 'border-border bg-muted/25 hover:border-primary/40'}`}><img src={`https://raw.githubusercontent.com/mohamedatef90/exercise-library/main/gifs/${suggestion.gif}`} alt={`הדגמת ${suggestion.name}`} className="h-16 w-16 shrink-0 rounded-xl bg-white/90 object-cover" /><div className="min-w-0"><strong className="text-sm">{suggestion.name}</strong><p className="mt-1 text-[11px] leading-4 text-muted-foreground">{suggestion.description}</p><p className="mt-1 text-[10px] font-semibold text-primary">{suggestion.sets} סטים × {suggestion.reps}{suggestion.weight ? ` · ${suggestion.weight} ק״ג` : ' · משקל גוף'}</p></div></button>)}</div>{galleryPages > 1 && <div className="mt-3 flex items-center justify-between"><button onClick={() => setGalleryPage((page) => Math.max(0, page - 1))} disabled={galleryPage === 0} className="rounded-lg bg-muted px-3 py-2 text-xs font-semibold disabled:opacity-35">הקודם</button><span className="text-[11px] text-muted-foreground">עמוד {galleryPage + 1} מתוך {galleryPages}</span><button onClick={() => setGalleryPage((page) => Math.min(galleryPages - 1, page + 1))} disabled={galleryPage >= galleryPages - 1} className="rounded-lg bg-muted px-3 py-2 text-xs font-semibold disabled:opacity-35">הבא</button></div>}</div><div className="my-5 flex items-center gap-3 text-[11px] text-muted-foreground"><span className="h-px flex-1 bg-border" />או הוספה ידנית<span className="h-px flex-1 bg-border" /></div><div className="space-y-4"><label className="block text-sm font-semibold">שם התרגיל<Input value={newExerciseName} onChange={(event) => { setNewExerciseName(event.target.value); setPickedSuggestion(''); }} onKeyDown={(event) => { if (event.key === 'Enter') submitExercise(); }} placeholder="למשל: לחיצת חזה בדאמבלים" className="mt-2 h-12 bg-muted/45" /></label><div className="grid grid-cols-3 gap-3"><label className="text-sm font-semibold">סטים<Input type="number" min="1" value={newExerciseSets} onChange={(event) => setNewExerciseSets(Math.max(1, Number(event.target.value)))} className="mt-2 h-12 bg-muted/45" /></label><label className="text-sm font-semibold">חזרות<Input type="number" min="1" value={newExerciseReps} onChange={(event) => setNewExerciseReps(Math.max(1, Number(event.target.value)))} className="mt-2 h-12 bg-muted/45" /></label><label className="text-sm font-semibold">משקל ק״ג<Input type="number" min="0" step="0.5" value={newExerciseWeight} onChange={(event) => setNewExerciseWeight(Math.max(0, Number(event.target.value)))} className="mt-2 h-12 bg-muted/45" /></label></div><Button onClick={submitExercise} disabled={!newExerciseName.trim()} className="h-13 w-full font-bold"><Plus className="ml-2" size={18} />הוספה לתוכנית</Button></div></Card>}
+      {showAddExercise && <Card className="mt-4 border-primary/35 bg-card p-5"><div className="flex items-start justify-between gap-4"><div><p className="text-xs text-muted-foreground">תרגיל חדש ב־{selectedPlan.name}</p><h3 className="mt-1 text-xl font-bold">הוספת תרגיל</h3></div><button onClick={() => setShowAddExercise(false)} className="rounded-lg bg-muted px-3 py-2 text-xs font-semibold">סגירה</button></div><div className="mt-5"><div className="mb-3 flex items-center justify-between"><div><p className="text-sm font-bold">גלריית תרגילים · {exerciseBank.length} אפשרויות</p><p className="mt-0.5 text-[11px] text-muted-foreground">בחר תרגיל כדי למלא את ערכי הפתיחה</p></div><Waves size={19} className="text-cyan-400" /></div><div className="mb-3 flex gap-2 overflow-x-auto pb-1">{[{ id: 'all', label: 'הכול' }, { id: 'legs', label: 'רגליים' }, { id: 'hinge', label: 'ירך אחורית' }, { id: 'pull', label: 'משיכה' }, { id: 'push', label: 'דחיפה' }, { id: 'shoulders', label: 'כתפיים' }, { id: 'core', label: 'ליבה' }, { id: 'power', label: 'כוח מתפרץ' }, { id: 'mobility', label: 'מוביליטי' }, { id: 'carry', label: 'נשיאות' }].map((category) => <button key={category.id} onClick={() => { setGalleryCategory(category.id); setGalleryPage(0); }} className={`shrink-0 rounded-lg px-3 py-1.5 text-[11px] font-semibold ${galleryCategory === category.id ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>{category.label}</button>)}</div><div className="grid gap-2 sm:grid-cols-2">{visibleGalleryItems.map((suggestion) => <button key={suggestion.name} onClick={() => chooseSuggestion(suggestion)} className={`flex items-center gap-3 rounded-2xl border p-3 text-right transition ${pickedSuggestion === suggestion.name ? 'border-primary bg-primary/8' : 'border-border bg-muted/25 hover:border-primary/40'}`}>{suggestion.gif ? <img src={`https://raw.githubusercontent.com/mohamedatef90/exercise-library/main/gifs/${suggestion.gif}`} alt={`הדגמת ${suggestion.name}`} className="h-16 w-16 shrink-0 rounded-xl bg-white/90 object-cover" /> : <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-cyan-400/10 text-cyan-300"><Dumbbell size={24} /></span>}<div className="min-w-0"><strong className="text-sm">{suggestion.name}</strong><p className="mt-1 text-[11px] leading-4 text-muted-foreground">{suggestion.description}</p><p className="mt-1 text-[10px] font-semibold text-primary">{suggestion.sets} סטים × {suggestion.reps}{suggestion.weight ? ` · ${suggestion.weight} ק״ג` : ' · משקל גוף'}</p></div></button>)}</div>{galleryPages > 1 && <div className="mt-3 flex items-center justify-between"><button onClick={() => setGalleryPage((page) => Math.max(0, page - 1))} disabled={galleryPage === 0} className="rounded-lg bg-muted px-3 py-2 text-xs font-semibold disabled:opacity-35">הקודם</button><span className="text-[11px] text-muted-foreground">עמוד {galleryPage + 1} מתוך {galleryPages}</span><button onClick={() => setGalleryPage((page) => Math.min(galleryPages - 1, page + 1))} disabled={galleryPage >= galleryPages - 1} className="rounded-lg bg-muted px-3 py-2 text-xs font-semibold disabled:opacity-35">הבא</button></div>}</div><div className="my-5 flex items-center gap-3 text-[11px] text-muted-foreground"><span className="h-px flex-1 bg-border" />או הוספה ידנית<span className="h-px flex-1 bg-border" /></div><div className="space-y-4"><label className="block text-sm font-semibold">שם התרגיל<Input value={newExerciseName} onChange={(event) => { setNewExerciseName(event.target.value); setPickedSuggestion(''); }} onKeyDown={(event) => { if (event.key === 'Enter') submitExercise(); }} placeholder="למשל: לחיצת חזה בדאמבלים" className="mt-2 h-12 bg-muted/45" /></label><div className="grid grid-cols-3 gap-3"><label className="text-sm font-semibold">סטים<Input type="number" min="1" value={newExerciseSets} onChange={(event) => setNewExerciseSets(Math.max(1, Number(event.target.value)))} className="mt-2 h-12 bg-muted/45" /></label><label className="text-sm font-semibold">חזרות<Input type="number" min="1" value={newExerciseReps} onChange={(event) => setNewExerciseReps(Math.max(1, Number(event.target.value)))} className="mt-2 h-12 bg-muted/45" /></label><label className="text-sm font-semibold">משקל ק״ג<Input type="number" min="0" step="0.5" value={newExerciseWeight} onChange={(event) => setNewExerciseWeight(Math.max(0, Number(event.target.value)))} className="mt-2 h-12 bg-muted/45" /></label></div><Button onClick={submitExercise} disabled={!newExerciseName.trim()} className="h-13 w-full font-bold"><Plus className="ml-2" size={18} />הוספה לתוכנית</Button></div></Card>}
     </section>
   </div>;
 }

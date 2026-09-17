@@ -16,13 +16,13 @@ async function recentSets() {
 
 export async function POST(request: Request) {
   if (!env.OPENAI_API_KEY) return Response.json({ ok: false, error: 'ai_not_configured' }, { status: 503 });
-  const body = await request.json() as { message?: string; messages?: ChatMessage[]; plans?: unknown[]; garmin?: unknown };
+  const body = await request.json() as { message?: string; messages?: ChatMessage[]; plans?: unknown[]; plannedActivities?: unknown[]; garmin?: unknown };
   const message = String(body.message || '').trim().slice(0, 1200);
   if (!message) return Response.json({ ok: false, error: 'message_required' }, { status: 400 });
 
   try {
     const sets = await recentSets();
-    const context = JSON.stringify({ plans: body.plans || [], recentSets: sets, garminSummary: body.garmin || null }).slice(0, 24000);
+    const context = JSON.stringify({ plans: body.plans || [], plannedActivities: body.plannedActivities || [], recentSets: sets, garminSummary: body.garmin || null }).slice(0, 24000);
     const history = (body.messages || []).slice(-8).map((item) => ({ role: item.role, content: String(item.content).slice(0, 1200) }));
     const response = await fetch('https://api.openai.com/v1/responses', {
       method: 'POST',
@@ -31,7 +31,7 @@ export async function POST(request: Request) {
         model: 'gpt-5.6-luna',
         store: false,
         max_output_tokens: 700,
-        instructions: 'אתה מאמן הכושר האישי של FlowFit. ענה בעברית קצרה, פרקטית וחמה. נתח את האימונים האחרונים, התוכניות ומדדי Garmin שסופקו. המלץ אילו תרגילים לבצע היום, והצע שינויים רק כשיש להם סיבה ברורה. התייחס לעומס, איזון קבוצות שרירים, RPE, משקל וחזרות. אל תאבחן מצבים רפואיים; בכאב חד, סחרחורת או פציעה המלץ לעצור ולהתייעץ עם איש מקצוע. ציין כשחסר מידע ואל תמציא נתונים.',
+        instructions: 'אתה מאמן הכושר האישי של FlowFit. ענה בעברית קצרה, פרקטית וחמה. המטרה היא לתעדף גלישה כשיש גלים או כשהמשתמש תכנן גלישה, תוך שמירה על התקדמות כוח ועל לפחות ריצה אחת בכל 7 ימים. נתח את התכנון העתידי, האימונים האחרונים, התוכניות ומדדי Garmin. המלץ מה לבצע היום ומחר והסבר אילו נתונים גרמו להמלצה. הצע שינוי תרגיל, משקל, חזרות או נפח רק כשיש סיבה ברורה. אם חסר תרגיל מתאים, הסבר את הפער והצע להוסיף אותו לבנק התרגילים הקבוע — לעולם לא כתרגיל חד־פעמי. התייחס לעומס, איזון קבוצות שרירים ו-RPE. אל תאבחן מצבים רפואיים; בכאב חד, סחרחורת או פציעה המלץ לעצור ולהתייעץ עם איש מקצוע. ציין כשחסר מידע ואל תמציא נתונים.',
         input: [...history, { role: 'user', content: `נתוני FlowFit העדכניים:\n${context}\n\nהשאלה שלי: ${message}` }],
       }),
     });
