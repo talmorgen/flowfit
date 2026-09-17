@@ -240,10 +240,13 @@ function Dashboard({ plans, onPlans, onStart }: { plans: Plan[]; onPlans: () => 
     setCoachInput(''); setCoachLoading(true); setCoachOpen(true);
     try {
       const response = await fetch('/api/coach', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message, messages: previous, plans, garmin: { latestHealth: garmin.latestHealth, recentActivities: garmin.activities.slice(0, 14), activityMatches } }) });
-      const data = await response.json() as { ok?: boolean; answer?: string };
-      if (!response.ok || !data.ok || !data.answer) throw new Error();
+      const data = await response.json() as { ok?: boolean; answer?: string; error?: string };
+      if (!response.ok || !data.ok || !data.answer) {
+        if (data.error?.toLowerCase().includes('no credits')) throw new Error('no_credits');
+        throw new Error('coach_failed');
+      }
       setCoachMessages((current) => [...current, { role: 'assistant', content: data.answer! }]);
-    } catch { setCoachMessages((current) => [...current, { role: 'assistant', content: 'לא הצלחתי לנתח כרגע את הנתונים. נסה שוב בעוד רגע.' }]); }
+    } catch (error) { setCoachMessages((current) => [...current, { role: 'assistant', content: error instanceof Error && error.message === 'no_credits' ? 'החיבור ל־OpenAI הושלם, אבל לחשבון ה־API אין כרגע קרדיטים. לאחר הוספת קרדיטים אוכל לנתח מיד את האימונים שלך.' : 'לא הצלחתי לנתח כרגע את הנתונים. נסה שוב בעוד רגע.' }]); }
     finally { setCoachLoading(false); }
   }
   const health = garmin.latestHealth;
