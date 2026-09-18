@@ -18,6 +18,10 @@ type PlannedActivity = { date: string; type: PlannedActivityType; planId?: numbe
 
 const ACTIVE_WORKOUT_KEY = 'flowfit-active-workout';
 
+function saveCloudState(patch: Record<string, unknown>) {
+  return fetch('/api/state', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) }).catch(() => undefined);
+}
+
 const initialPlans: Plan[] = [
   { id: 1, name: 'Full Body A', subtitle: 'האימון הנוכחי · 8 תרגילים', accent: 'lime', exercises: [
     { id: 1, name: 'סקוואט', sets: 3, reps: 7, weight: 70 },
@@ -59,18 +63,24 @@ export default function Home() {
   const [lastWorkoutSummary, setLastWorkoutSummary] = useState<WorkoutSummary | null>(null);
   const [exerciseBank, setExerciseBank] = useState<BankExercise[]>(baseExerciseBank);
   const [exerciseBankReady, setExerciseBankReady] = useState(false);
+  const [cloudReady, setCloudReady] = useState(false);
 
   const selectedPlan = plans.find((plan) => plan.id === selectedPlanId)!;
   const activeExercise = selectedPlan.exercises.find((exercise) => exercise.id === activeExerciseId) ?? selectedPlan.exercises[0];
 
-  useEffect(() => { try { const saved = localStorage.getItem('flowfit-plans'); if (saved) { const parsed = JSON.parse(saved) as Plan[]; if (parsed.length) { setPlans(parsed); setSelectedPlanId(parsed[0].id); } } } catch { /* keep defaults */ } finally { setPlansReady(true); } }, []);
-  useEffect(() => { if (plansReady) localStorage.setItem('flowfit-plans', JSON.stringify(plans)); }, [plans, plansReady]);
   useEffect(() => {
-    try { setExerciseBank(mergeExerciseBank(JSON.parse(localStorage.getItem('flowfit-exercise-bank') || '[]') as BankExercise[])); }
-    catch { setExerciseBank(baseExerciseBank); }
-    finally { setExerciseBankReady(true); }
+    let cachedPlans = initialPlans; let cachedBank = baseExerciseBank;
+    try { const saved = JSON.parse(localStorage.getItem('flowfit-plans') || 'null') as Plan[] | null; if (saved?.length) cachedPlans = saved; } catch { /* keep defaults */ }
+    try { cachedBank = mergeExerciseBank(JSON.parse(localStorage.getItem('flowfit-exercise-bank') || '[]') as BankExercise[]); } catch { /* keep defaults */ }
+    setPlans(cachedPlans); setSelectedPlanId(cachedPlans[0].id); setExerciseBank(cachedBank); setPlansReady(true); setExerciseBankReady(true);
+    fetch('/api/state').then((response) => response.json() as Promise<{ ok: boolean; state?: { plans?: Plan[]; exerciseBank?: BankExercise[] } | null }>).then((data) => {
+      if (data.state?.plans?.length) { setPlans(data.state.plans); setSelectedPlanId(data.state.plans[0].id); }
+      else saveCloudState({ plans: cachedPlans, exerciseBank: cachedBank });
+      if (data.state?.exerciseBank) setExerciseBank(mergeExerciseBank(data.state.exerciseBank));
+    }).catch(() => undefined).finally(() => setCloudReady(true));
   }, []);
-  useEffect(() => { if (exerciseBankReady) localStorage.setItem('flowfit-exercise-bank', JSON.stringify(exerciseBank)); }, [exerciseBank, exerciseBankReady]);
+  useEffect(() => { if (plansReady) { localStorage.setItem('flowfit-plans', JSON.stringify(plans)); if (cloudReady) saveCloudState({ plans }); } }, [cloudReady, plans, plansReady]);
+  useEffect(() => { if (exerciseBankReady) { localStorage.setItem('flowfit-exercise-bank', JSON.stringify(exerciseBank)); if (cloudReady) saveCloudState({ exerciseBank }); } }, [cloudReady, exerciseBank, exerciseBankReady]);
   useEffect(() => {
     if (!plansReady || sessionReady) return;
     try {
@@ -258,14 +268,22 @@ function Dashboard({ plans, activeWorkout, lastWorkoutSummary, onResume, onPlans
     setGarmin({ latestHealth: data.latestHealth ?? null, activities: data.activities ?? [] });
   }
   useEffect(() => { loadGarmin().catch(() => undefined); }, []);
-  useEffect(() => { try { setActivityMatches(JSON.parse(localStorage.getItem('flowfit-garmin-matches') || '{}')); } catch { setActivityMatches({}); } }, []);
-  useEffect(() => { try { setPlannedActivities(JSON.parse(localStorage.getItem('flowfit-week-plan') || '[]')); } catch { setPlannedActivities([]); } }, []);
+  useEffect(() => {
+    let cachedMatches: Record<string, string> = {}; let cachedWeek: PlannedActivity[] = [];
+    try { cachedMatches = JSON.parse(localStorage.getItem('flowfit-garmin-matches') || '{}'); setActivityMatches(cachedMatches); } catch { setActivityMatches({}); }
+    try { cachedWeek = JSON.parse(localStorage.getItem('flowfit-week-plan') || '[]'); setPlannedActivities(cachedWeek); } catch { setPlannedActivities([]); }
+    fetch('/api/state').then((response) => response.json() as Promise<{ ok: boolean; state?: { matches?: Record<string, string>; weekPlan?: PlannedActivity[] } | null }>).then((data) => {
+      if (data.state?.matches) { setActivityMatches(data.state.matches); localStorage.setItem('flowfit-garmin-matches', JSON.stringify(data.state.matches)); } else if (Object.keys(cachedMatches).length) saveCloudState({ matches: cachedMatches });
+      if (data.state?.weekPlan) { setPlannedActivities(data.state.weekPlan); localStorage.setItem('flowfit-week-plan', JSON.stringify(data.state.weekPlan)); } else if (cachedWeek.length) saveCloudState({ weekPlan: cachedWeek });
+    }).catch(() => undefined);
+  }, []);
   useEffect(() => { setTodayChoice(localStorage.getItem('flowfit-today-choice') || 'recommended'); fetch('/api/waves').then((response) => response.json()).then((data: { daily?: { time?: string[]; wave_height_max?: number[]; wave_period_max?: number[]; wave_direction_dominant?: number[] } }) => { const daily = data.daily; if (!daily?.time) return; setWaveForecast(daily.time.map((date, index) => ({ date, height: Number(daily.wave_height_max?.[index] || 0), period: Number(daily.wave_period_max?.[index] || 0), direction: Number(daily.wave_direction_dominant?.[index] || 0) }))); }).catch(() => undefined); }, []);
   function saveActivityMatch(activityId: string, planName: string) {
     const next = { ...activityMatches };
     if (planName) next[activityId] = planName; else delete next[activityId];
     setActivityMatches(next);
     localStorage.setItem('flowfit-garmin-matches', JSON.stringify(next));
+    saveCloudState({ matches: next });
   }
   async function syncGarminNow() {
     if (garminSyncState === 'syncing') return;
@@ -351,6 +369,7 @@ function Dashboard({ plans, activeWorkout, lastWorkoutSummary, onResume, onPlans
   function replaceWeek(next: PlannedActivity[]) {
     setPlannedActivities(next);
     localStorage.setItem('flowfit-week-plan', JSON.stringify(next));
+    saveCloudState({ weekPlan: next });
     setWeekConfirmed(false);
   }
   function toggleSurfDate(date: string) {
@@ -452,7 +471,7 @@ function ProgressScreen({ plans, onAdaptExercise, onAddSurfSupport }: { plans: P
   const [appliedAdjustment, setAppliedAdjustment] = useState<string | null>(null);
   useEffect(() => {
     Promise.all([
-      fetch('/api/sheets').then((response) => response.json() as Promise<{ ok: boolean; sets?: LoggedSet[] }>),
+      fetch('/api/state?view=sets').then((response) => response.json() as Promise<{ ok: boolean; sets?: LoggedSet[] }>).then(async (data) => data.sets?.length ? data : fetch('/api/sheets').then((response) => response.json() as Promise<{ ok: boolean; sets?: LoggedSet[] }>)),
       fetch('/api/sheets?source=garmin').then((response) => response.json() as Promise<{ ok: boolean; activities?: string[][] }>),
     ]).then(([sheetData, garminData]) => { setSets(sheetData.sets || []); setActivities(garminData.activities || []); }).finally(() => setLoading(false));
   }, []);
@@ -682,7 +701,7 @@ function WorkoutScreen({ workoutId, workoutStartedAt, plan, exercise, completedS
   useEffect(() => {
     let active = true;
     setHistoryState('loading');
-    fetch('/api/sheets').then((response) => response.json() as Promise<{ ok: boolean; sets?: Array<{ planName: string; exerciseName: string; reps: string; weightKg: string; timestamp: string }> }>).then((data) => {
+    fetch('/api/state?view=sets').then((response) => response.json() as Promise<{ ok: boolean; sets?: Array<{ planName: string; exerciseName: string; reps: string; weightKg: string; timestamp: string }> }>).then(async (data) => data.sets?.length ? data : fetch('/api/sheets').then((response) => response.json())).then((data: { ok: boolean; sets?: Array<{ planName: string; exerciseName: string; reps: string; weightKg: string; timestamp: string }> }) => {
       if (!active) return;
       const latest = data.sets?.find((set) => set.exerciseName.trim() === exercise.name.trim() && set.planName.trim() === plan.name.trim()) || data.sets?.find((set) => set.exerciseName.trim() === exercise.name.trim());
       if (!latest) { setLastSet(null); setHistoryState('empty'); return; }
@@ -697,9 +716,11 @@ function WorkoutScreen({ workoutId, workoutStartedAt, plan, exercise, completedS
     const savedSet = { setId: crypto.randomUUID(), setNumber: nextCompleted, reps, weightKg: exercise.weight === null ? 0 : weight, rpe, notes: note, performedAt, setDurationSec: timerMode === 'set' ? elapsedSeconds : 0 };
     setSaveState('saving');
     try {
-      const response = await fetch('/api/sheets', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'saveSet', set: { ...savedSet, workoutId, workoutStartedAt, planId: plan.id, planName: plan.name, activityType: 'strength', exerciseId: exercise.id, exerciseName: exercise.name, source: 'FlowFit' } }) });
+      const fullSet = { ...savedSet, workoutId, workoutStartedAt, planId: plan.id, planName: plan.name, activityType: 'strength', exerciseId: exercise.id, exerciseName: exercise.name, source: 'FlowFit' };
+      const response = await fetch('/api/state', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'saveSet', set: fullSet }) });
       const data = await response.json() as { ok: boolean };
       if (!data.ok) throw new Error();
+      fetch('/api/sheets', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'saveSet', set: fullSet }) }).catch(() => undefined);
       setCompletedSets(nextCompleted);
       setSavedSets((current) => [...current, savedSet]);
       setSaveState('saved');
