@@ -12,6 +12,7 @@ type Exercise = { id: number; name: string; sets: number; reps: number; weight: 
 type Plan = { id: number; name: string; subtitle: string; accent: string; exercises: Exercise[]; kind?: 'strength' | 'run'; distanceKm?: number; targetPace?: string };
 type Screen = 'dashboard' | 'progress' | 'plans' | 'new-plan' | 'choose' | 'workout';
 type ActiveWorkoutSession = { workoutId: string; planId: number; exerciseId: number; completedSets: number; rpe: number; screen: 'choose' | 'workout'; startedAt: string; updatedAt: string };
+type WorkoutSummary = { planName: string; completedSets: number; durationMinutes: number; endedAt: string };
 type PlannedActivityType = 'surf' | 'strength' | 'run' | 'swim' | 'rest';
 type PlannedActivity = { date: string; type: PlannedActivityType; planId?: number };
 
@@ -54,6 +55,8 @@ export default function Home() {
   const [workoutId, setWorkoutId] = useState('');
   const [workoutStartedAt, setWorkoutStartedAt] = useState('');
   const [sessionReady, setSessionReady] = useState(false);
+  const [resumeAvailable, setResumeAvailable] = useState(false);
+  const [lastWorkoutSummary, setLastWorkoutSummary] = useState<WorkoutSummary | null>(null);
   const [exerciseBank, setExerciseBank] = useState<BankExercise[]>(baseExerciseBank);
   const [exerciseBankReady, setExerciseBankReady] = useState(false);
 
@@ -78,8 +81,7 @@ export default function Home() {
         const savedExercise = savedPlan?.exercises.find((exercise) => exercise.id === session.exerciseId);
         if (savedPlan && savedExercise && session.workoutId) {
           setSelectedPlanId(session.planId); setActiveExerciseId(session.exerciseId); setCompletedSets(session.completedSets || 0);
-          setRpe(session.rpe || 7); setWorkoutId(session.workoutId); setWorkoutStartedAt(session.startedAt || new Date().toISOString());
-          setScreen(session.screen || 'workout');
+          setRpe(session.rpe || 7); setWorkoutId(session.workoutId); setWorkoutStartedAt(session.startedAt || new Date().toISOString()); setResumeAvailable(true);
         }
       }
     } catch { localStorage.removeItem(ACTIVE_WORKOUT_KEY); }
@@ -90,6 +92,21 @@ export default function Home() {
     const session: ActiveWorkoutSession = { workoutId, planId: selectedPlanId, exerciseId: activeExerciseId, completedSets, rpe, screen, startedAt: workoutStartedAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
     localStorage.setItem(ACTIVE_WORKOUT_KEY, JSON.stringify(session));
   }, [activeExerciseId, completedSets, rpe, screen, selectedPlanId, sessionReady, workoutId, workoutStartedAt]);
+  useEffect(() => { try { setLastWorkoutSummary(JSON.parse(localStorage.getItem('flowfit-last-workout-summary') || 'null') as WorkoutSummary | null); } catch { setLastWorkoutSummary(null); } }, []);
+
+  function stopWorkout() {
+    let totalSets = 0;
+    for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+      const key = localStorage.key(index);
+      if (!key?.startsWith(`flowfit-workout-draft:${workoutId}:`)) continue;
+      try { totalSets += (JSON.parse(localStorage.getItem(key) || '{}') as WorkoutDraft).savedSets?.length || 0; } catch { /* remove invalid draft below */ }
+      localStorage.removeItem(key);
+    }
+    const summary = { planName: selectedPlan.name, completedSets: totalSets, durationMinutes: Math.max(1, Math.round((Date.now() - new Date(workoutStartedAt || Date.now()).getTime()) / 60000)), endedAt: new Date().toISOString() };
+    localStorage.setItem('flowfit-last-workout-summary', JSON.stringify(summary)); localStorage.removeItem(ACTIVE_WORKOUT_KEY);
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+    setLastWorkoutSummary(summary); setResumeAvailable(false); setWorkoutId(''); setWorkoutStartedAt(''); setCompletedSets(0); setRpe(7); setScreen('dashboard');
+  }
 
   function updateExercise(id: number, field: 'sets' | 'reps' | 'weight', delta: number) {
     setPlans((current) => current.map((plan) => plan.id !== selectedPlanId ? plan : {
@@ -177,12 +194,12 @@ export default function Home() {
       </header>
 
       <div className="mx-auto max-w-5xl px-4 py-5">
-        {screen === 'dashboard' && <Dashboard plans={plans} onPlans={() => setScreen('plans')} onStart={(planId) => { setSelectedPlanId(planId); setScreen('choose'); }} />}
+        {screen === 'dashboard' && <Dashboard plans={plans} activeWorkout={resumeAvailable && workoutId ? { plan: selectedPlan, exercise: activeExercise, completedSets } : null} lastWorkoutSummary={lastWorkoutSummary} onResume={() => setScreen('workout')} onPlans={() => setScreen('plans')} onStart={(planId) => { localStorage.removeItem(ACTIVE_WORKOUT_KEY); setWorkoutId(''); setWorkoutStartedAt(''); setSelectedPlanId(planId); setResumeAvailable(false); setScreen('choose'); }} />}
         {screen === 'progress' && <ProgressScreen plans={plans} />}
         {screen === 'plans' && <PlansScreen plans={plans} selectedPlan={selectedPlan} selectedPlanId={selectedPlanId} setSelectedPlanId={setSelectedPlanId} editing={editing} setEditing={setEditing} updateExercise={updateExercise} updateRunPlan={updateRunPlan} removeExercise={removeExercise} moveExercise={moveExercise} renameExercise={renameExercise} addExercise={addExercise} exerciseBank={exerciseBank} addExerciseToBank={addExerciseToBank} deletePlan={deletePlan} generateComplementaryPlan={generateComplementaryPlan} setScreen={setScreen} />}
         {screen === 'new-plan' && <NewPlanScreen onCancel={() => setScreen('plans')} onCreate={createPlan} />}
         {screen === 'choose' && <ChooseScreen plan={selectedPlan} onChoose={(id) => { if (!workoutId) { setWorkoutId(crypto.randomUUID()); setWorkoutStartedAt(new Date().toISOString()); } setActiveExerciseId(id); setCompletedSets(0); setScreen('workout'); }} />}
-        {screen === 'workout' && <WorkoutScreen key={`${workoutId}:${activeExercise.id}`} workoutId={workoutId} workoutStartedAt={workoutStartedAt} plan={selectedPlan} exercise={activeExercise} completedSets={completedSets} setCompletedSets={setCompletedSets} rpe={rpe} setRpe={setRpe} onSwitch={() => setScreen('choose')} onNext={() => { const index = selectedPlan.exercises.findIndex((item) => item.id === activeExercise.id); const next = selectedPlan.exercises[(index + 1) % selectedPlan.exercises.length]; setActiveExerciseId(next.id); setCompletedSets(0); }} />}
+        {screen === 'workout' && <WorkoutScreen key={`${workoutId}:${activeExercise.id}`} workoutId={workoutId} workoutStartedAt={workoutStartedAt} plan={selectedPlan} exercise={activeExercise} completedSets={completedSets} setCompletedSets={setCompletedSets} rpe={rpe} setRpe={setRpe} onStop={stopWorkout} onSwitch={() => setScreen('choose')} onNext={() => { const index = selectedPlan.exercises.findIndex((item) => item.id === activeExercise.id); const next = selectedPlan.exercises[(index + 1) % selectedPlan.exercises.length]; setActiveExerciseId(next.id); setCompletedSets(0); }} />}
       </div>
     </main>
   );
@@ -207,7 +224,7 @@ function garminActivityName(activity: string[], match?: string) {
   return activity[3] || activity[2] || 'פעילות';
 }
 
-function Dashboard({ plans, onPlans, onStart }: { plans: Plan[]; onPlans: () => void; onStart: (planId: number) => void }) {
+function Dashboard({ plans, activeWorkout, lastWorkoutSummary, onResume, onPlans, onStart }: { plans: Plan[]; activeWorkout: { plan: Plan; exercise: Exercise; completedSets: number } | null; lastWorkoutSummary: WorkoutSummary | null; onResume: () => void; onPlans: () => void; onStart: (planId: number) => void }) {
   const [sheetState, setSheetState] = useState<'loading' | 'connected' | 'error'>('loading');
   const [recordCount, setRecordCount] = useState(0);
   const [garmin, setGarmin] = useState<{ latestHealth: string[] | null; activities: string[][] }>({ latestHealth: null, activities: [] });
@@ -359,6 +376,8 @@ function Dashboard({ plans, onPlans, onStart }: { plans: Plan[]; onPlans: () => 
   const todayLabel = new Intl.DateTimeFormat('he-IL', { weekday: 'long', day: 'numeric', month: 'long' }).format(today);
   return <div className="space-y-5">
     <div className="flex items-end justify-between gap-4"><div><p className="text-sm text-muted-foreground">{todayLabel}</p><h2 className="mt-1 text-3xl font-bold">בוקר טוב, טל</h2></div><span className={`rounded-full px-3 py-1.5 text-xs font-semibold ${sheetState === 'connected' ? 'bg-emerald-400/10 text-emerald-400' : sheetState === 'error' ? 'bg-red-400/10 text-red-400' : 'bg-muted text-muted-foreground'}`}>{sheetState === 'connected' ? `Google Sheets מחובר · ${recordCount} רשומות` : sheetState === 'error' ? 'שגיאת סנכרון' : 'מתחבר ל־Google Sheets…'}</span></div>
+    {activeWorkout && <Card className="border-primary/45 bg-primary/7 p-4"><div className="flex items-center gap-3"><span className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary text-primary-foreground"><Timer size={21} /></span><div className="min-w-0 flex-1"><p className="text-[11px] font-bold text-primary">אימון מושהה</p><p className="truncate font-bold">{activeWorkout.plan.name} · {activeWorkout.exercise.name}</p><p className="mt-0.5 text-xs text-muted-foreground">{activeWorkout.completedSets} סטים נשמרו בתרגיל הנוכחי</p></div><Button onClick={onResume} className="shrink-0 font-bold">המשך</Button></div></Card>}
+    {!activeWorkout && lastWorkoutSummary && <Card className="border-emerald-400/20 bg-emerald-400/5 p-4"><div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-400/10 text-emerald-400"><Check size={20} /></span><div><p className="text-[11px] font-bold text-emerald-400">האימון האחרון הסתיים</p><p className="font-bold">{lastWorkoutSummary.planName}</p><p className="mt-0.5 text-xs text-muted-foreground">{lastWorkoutSummary.completedSets} סטים · {lastWorkoutSummary.durationMinutes} דקות</p></div></div></Card>}
     <Card className="border-primary/25 bg-[linear-gradient(145deg,#153f49,#0a252d)] p-5 text-white"><div className="flex items-start justify-between gap-4"><div><p className="text-xs text-cyan-100/60">מה כדאי לעשות היום?</p><h3 className="mt-1 text-2xl font-bold">{recommendation.title}</h3><p className="mt-2 text-sm text-cyan-50/75">{recommendation.detail} · {recommendation.reason}</p></div><Target className="shrink-0 text-primary" size={28} /></div><div className="mt-5 flex gap-2 overflow-x-auto pb-1">{choices.map((choice) => <button key={choice.id} onClick={() => { setTodayChoice(choice.id); localStorage.setItem('flowfit-today-choice', choice.id); }} className={`flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold ${todayChoice === choice.id ? 'bg-primary text-primary-foreground' : 'bg-white/10 text-white'}`}>{choice.icon}{choice.label}</button>)}</div><p className="mt-3 text-[11px] text-cyan-50/50">הבחירה שלך להיום: <strong className="text-cyan-50/80">{todayTitle}</strong>. אפשר לשנות בכל רגע.</p></Card>
     <Card className="border-cyan-400/25 bg-card p-4"><div className="flex items-center justify-between gap-4"><div><p className="text-xs text-muted-foreground">ההמלצה למחר</p><h3 className="mt-1 text-lg font-bold">{tomorrowRecommendation.title}</h3><p className="mt-1 text-xs text-muted-foreground">{tomorrowRecommendation.detail}</p></div><CalendarDays className="shrink-0 text-cyan-300" size={24} /></div></Card>
     <Card className="overflow-hidden border-cyan-400/25 bg-card p-0"><button onClick={() => setCoachOpen((open) => !open)} className="flex w-full items-center justify-between p-5 text-right"><div className="flex items-center gap-3"><span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-cyan-400/10 text-cyan-300"><Bot size={23} /></span><div><p className="font-bold">מאמן AI אישי</p><p className="mt-1 text-xs text-muted-foreground">שאל על תרגילים, האימון האחרון ושינויים בתוכנית</p></div></div><span className="rounded-xl bg-primary/10 px-3 py-2 text-xs font-bold text-primary">{coachOpen ? 'סגירה' : 'התייעצות'}</span></button>{coachOpen && <div className="border-t border-border/70 p-4"><div className="max-h-80 space-y-3 overflow-y-auto rounded-2xl bg-muted/30 p-3">{coachMessages.map((message, index) => <div key={index} className={`max-w-[88%] rounded-2xl px-3 py-2 text-sm leading-6 ${message.role === 'assistant' ? 'mr-auto bg-cyan-400/10 text-foreground' : 'mr-0 bg-primary text-primary-foreground'}`}>{message.content}</div>)}{coachLoading && <div className="mr-auto max-w-[88%] rounded-2xl bg-cyan-400/10 px-3 py-2 text-sm text-muted-foreground">עובר על האימונים שלך…</div>}</div><div className="mt-3 flex gap-2 overflow-x-auto pb-1"><button onClick={() => askCoach('סקור את האימון האחרון שלי והצע שינויים אם צריך')} className="shrink-0 rounded-xl bg-muted px-3 py-2 text-xs font-semibold">סקור אימון אחרון</button><button onClick={() => askCoach('איזה אימון ותרגילים כדאי לי לעשות היום?')} className="shrink-0 rounded-xl bg-muted px-3 py-2 text-xs font-semibold">מה לעשות היום?</button><button onClick={() => askCoach('האם התוכניות שלי מאוזנות בין קבוצות השרירים?')} className="shrink-0 rounded-xl bg-muted px-3 py-2 text-xs font-semibold">בדיקת איזון</button></div><div className="mt-3 flex gap-2"><Input value={coachInput} onChange={(event) => setCoachInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') askCoach(); }} placeholder="שאל את המאמן…" className="h-12 flex-1 bg-muted/45" /><Button onClick={() => askCoach()} disabled={!coachInput.trim() || coachLoading} className="h-12 w-12 shrink-0 rounded-xl p-0" aria-label="שליחת שאלה"><Send size={18} /></Button></div><p className="mt-2 text-[10px] text-muted-foreground">המלצות אימון כלליות בלבד. במקרה של כאב או פציעה יש להתייעץ עם איש מקצוע.</p></div>}</Card>
@@ -551,7 +570,7 @@ type WorkoutDraft = { weight: number; reps: number; sessionSets: number; note: s
 const REST_SECONDS = 90;
 function formatDuration(seconds: number) { return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`; }
 
-function WorkoutScreen({ workoutId, workoutStartedAt, plan, exercise, completedSets, setCompletedSets, rpe, setRpe, onSwitch, onNext }: { workoutId: string; workoutStartedAt: string; plan: Plan; exercise: Exercise; completedSets: number; setCompletedSets: (n: number) => void; rpe: number; setRpe: (n: number) => void; onSwitch: () => void; onNext: () => void }) {
+function WorkoutScreen({ workoutId, workoutStartedAt, plan, exercise, completedSets, setCompletedSets, rpe, setRpe, onStop, onSwitch, onNext }: { workoutId: string; workoutStartedAt: string; plan: Plan; exercise: Exercise; completedSets: number; setCompletedSets: (n: number) => void; rpe: number; setRpe: (n: number) => void; onStop: () => void; onSwitch: () => void; onNext: () => void }) {
   const [weight, setWeight] = useState(exercise.weight ?? 0);
   const [reps, setReps] = useState(exercise.reps);
   const [sessionSets, setSessionSets] = useState(exercise.sets);
@@ -565,6 +584,7 @@ function WorkoutScreen({ workoutId, workoutStartedAt, plan, exercise, completedS
   const [lastSet, setLastSet] = useState<{ reps: number; weightKg: number; timestamp: string } | null>(null);
   const [historyState, setHistoryState] = useState<'loading' | 'found' | 'empty'>('loading');
   const [coachEnabled, setCoachEnabled] = useState(false);
+  const [stopPending, setStopPending] = useState(false);
   const guide = guideForExercise(exercise.name);
   const draftKey = `flowfit-workout-draft:${workoutId}:${exercise.id}`;
   const elapsedSeconds = Math.max(0, Math.floor((now - phaseStartedAt) / 1000));
@@ -643,7 +663,7 @@ function WorkoutScreen({ workoutId, workoutStartedAt, plan, exercise, completedS
   }
   return <div className="mx-auto max-w-2xl"><Card className="overflow-hidden border-0 bg-card p-0 shadow-[0_18px_50px_rgba(0,0,0,.22)]">
     <div className="bg-[linear-gradient(145deg,#153f49,#0a252d)] px-5 py-5 text-white">
-      <div className="flex items-center justify-between gap-4"><div><p className="text-xs text-cyan-100/60">{plan.name} · תרגיל נוכחי</p><h2 className="mt-1 text-3xl font-bold">{exercise.name}</h2></div><div className="flex gap-2"><button onClick={onSwitch} className="rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold">החלפה</button><button onClick={onNext} className="flex items-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-xs font-bold text-primary-foreground">לתרגיל הבא<ChevronLeft size={15} /></button></div></div>
+      <div className="flex items-center justify-between gap-4"><div><p className="text-xs text-cyan-100/60">{plan.name} · תרגיל נוכחי</p><h2 className="mt-1 text-3xl font-bold">{exercise.name}</h2></div><div className="flex flex-wrap justify-end gap-2"><button onClick={() => { if (stopPending) onStop(); else setStopPending(true); }} onBlur={() => setStopPending(false)} className={`rounded-xl px-3 py-2 text-xs font-semibold ${stopPending ? 'bg-red-400 text-slate-950' : 'bg-red-400/12 text-red-300'}`}>{stopPending ? 'לחץ שוב לסיום' : 'סיום אימון'}</button><button onClick={onSwitch} className="rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold">החלפה</button><button onClick={onNext} className="flex items-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-xs font-bold text-primary-foreground">לתרגיל הבא<ChevronLeft size={15} /></button></div></div>
     </div>
     <div className="p-5">
       <div className="mb-5 rounded-2xl border border-cyan-400/25 bg-cyan-400/5 p-4"><div className="flex items-center gap-3"><button type="button" onClick={toggleCoach} className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full ${coachEnabled ? 'bg-cyan-300 text-slate-950 shadow-[0_0_24px_rgba(34,211,238,.3)]' : 'bg-muted text-muted-foreground'}`} aria-label={coachEnabled ? 'כיבוי המאמן הקולי' : 'הפעלת המאמן הקולי'}>{coachEnabled ? <Volume2 size={22} /> : <VolumeX size={22} />}</button><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2"><p className="font-bold">מאמן קולי בזמן האימון</p><span className={`text-[10px] font-bold ${coachEnabled ? 'text-cyan-300' : 'text-muted-foreground'}`}>{coachEnabled ? 'פעיל' : 'כבוי'}</span></div><p className="mt-1 text-xs leading-5 text-muted-foreground">הנחיות קצרות בלבד, כדי שהמוזיקה תמשיך בין העדכונים.</p></div></div><div className="mt-3 rounded-xl bg-black/15 p-3"><p className="text-xs leading-5">{coachAdvice.text}</p>{coachAdvice.action && <button type="button" onClick={() => { coachAdvice.apply(); speakCoach(`${coachAdvice.action} בוצע.`); }} className="mt-2 rounded-lg bg-primary/12 px-3 py-2 text-[11px] font-bold text-primary">{coachAdvice.action}</button>}</div></div>
