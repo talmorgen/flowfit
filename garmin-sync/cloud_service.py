@@ -22,6 +22,8 @@ SYNC_API_KEY = os.getenv("SYNC_API_KEY", "")
 FLOWFIT_ENDPOINT = os.getenv("FLOWFIT_ENDPOINT", "")
 FLOWFIT_SECRET = os.getenv("FLOWFIT_SECRET", "")
 SYNC_DAYS = max(1, min(90, int(os.getenv("SYNC_DAYS", "14"))))
+HISTORY_START = date.fromisoformat(os.getenv("GARMIN_HISTORY_START", "2018-01-01"))
+HEALTH_HISTORY_DAYS = max(14, min(365, int(os.getenv("GARMIN_HEALTH_HISTORY_DAYS", "90"))))
 
 app = FastAPI(title="FlowFit Garmin Sync", docs_url=None, redoc_url=None)
 sync_lock = asyncio.Lock()
@@ -57,16 +59,18 @@ def authorize(authorization: str | None) -> None:
         raise HTTPException(status_code=401, detail="unauthorized")
 
 
-def run_sync() -> dict[str, object]:
+def run_sync(full_history: bool = False) -> dict[str, object]:
     token_dir = ensure_tokens()
     client = Garmin()
     client.login(str(token_dir))
     end = date.today()
-    start = end - timedelta(days=SYNC_DAYS - 1)
+    start = HISTORY_START if full_history else end - timedelta(days=SYNC_DAYS - 1)
+    health_start = max(start, end - timedelta(days=HEALTH_HISTORY_DAYS - 1))
     activities = [sync.normalize_activity(item) for item in client.get_activities_by_date(start.isoformat(), end.isoformat())]
-    health = [sync.normalize_health(client, start + timedelta(days=offset)) for offset in range(SYNC_DAYS)]
+    health_days = (end - health_start).days + 1
+    health = [sync.normalize_health(client, health_start + timedelta(days=offset)) for offset in range(health_days)]
     result = sync.post(FLOWFIT_ENDPOINT, FLOWFIT_SECRET, {"action": "syncGarmin", "activities": activities, "health": health})
-    return {"ok": True, "activities": result["activities"], "healthDays": result["healthDays"], "syncedThrough": end.isoformat()}
+    return {"ok": True, "activities": result["activities"], "healthDays": result["healthDays"], "syncedThrough": end.isoformat(), "activityData": activities, "healthData": health, "fullHistory": full_history}
 
 
 @app.get("/health")
@@ -75,12 +79,12 @@ def health() -> dict[str, bool]:
 
 
 @app.post("/sync")
-async def sync_now(authorization: str | None = Header(default=None)) -> dict[str, object]:
+async def sync_now(full: bool = False, authorization: str | None = Header(default=None)) -> dict[str, object]:
     authorize(authorization)
     if sync_lock.locked():
         raise HTTPException(status_code=409, detail="sync_in_progress")
     async with sync_lock:
         try:
-            return await asyncio.to_thread(run_sync)
+            return await asyncio.to_thread(run_sync, full)
         except Exception as error:
             raise HTTPException(status_code=502, detail=str(error)) from error
