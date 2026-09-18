@@ -36,8 +36,19 @@ async function storeData(activities: GarminActivity[], health: GarminHealth[]) {
   for (let index = 0; index < statements.length; index += 75) await env.DB.batch(statements.slice(index, index + 75));
 }
 
+async function importLegacyGarmin() {
+  if (!env.GOOGLE_SHEETS_ENDPOINT || !env.GOOGLE_SHEETS_SECRET) return;
+  const response = await fetch(env.GOOGLE_SHEETS_ENDPOINT, { method: 'POST', headers: { 'content-type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'getGarminDashboard', secret: env.GOOGLE_SHEETS_SECRET }) });
+  const data = await response.json() as { ok?: boolean; activities?: unknown[][]; health?: unknown[][] };
+  if (!data.ok) return;
+  const activities = (data.activities || []).map((row) => ({ activityId: String(row[0] || ''), startTime: String(row[1] || ''), activityType: String(row[2] || ''), name: String(row[3] || 'Garmin activity'), durationMin: Number(row[4] || 0), distanceKm: Number(row[5] || 0), calories: Number(row[6] || 0), avgHr: Number(row[7] || 0), maxHr: Number(row[8] || 0), aerobicEffect: Number(row[9] || 0), anaerobicEffect: Number(row[10] || 0), trainingLoad: Number(row[11] || 0), sourceDevice: String(row[12] || 'Garmin') }));
+  const health = (data.health || []).map((row) => ({ date: String(row[0] || ''), sleepScore: Number(row[1] || 0), sleepHours: Number(row[2] || 0), hrvStatus: String(row[3] || ''), hrvLastNightMs: Number(row[4] || 0), restingHr: Number(row[5] || 0), bodyBatteryHigh: Number(row[6] || 0), bodyBatteryLow: Number(row[7] || 0), stressAvg: Number(row[8] || 0), steps: Number(row[9] || 0), calories: Number(row[10] || 0), intensityMinutes: Number(row[11] || 0), readinessScore: Number(row[12] || 0) }));
+  await storeData(activities, health);
+}
+
 export async function GET() {
-  const cache = await readCache();
+  let cache = await readCache();
+  if (!cache.activities.length) { await importLegacyGarmin(); cache = await readCache(); }
   return Response.json({ ok: true, ...cache });
 }
 
