@@ -262,7 +262,7 @@ function Dashboard({ plans, activeWorkout, lastWorkoutSummary, onResume, onPlans
   const [weekConfirmed, setWeekConfirmed] = useState(false);
   useEffect(() => { fetch('/api/sheets').then((response) => response.json() as Promise<{ ok: boolean; sets?: unknown[]; workouts?: unknown[] }>).then((data) => { if (!data.ok) throw new Error(); setRecordCount(data.sets?.length ?? data.workouts?.length ?? 0); setSheetState('connected'); }).catch(() => setSheetState('error')); }, []);
   async function loadGarmin() {
-    const response = await fetch(`/api/sheets?source=garmin&t=${Date.now()}`, { cache: 'no-store' });
+    const response = await fetch(`/api/garmin-sync?t=${Date.now()}`, { cache: 'no-store' });
     const data = await response.json() as { ok: boolean; latestHealth?: string[] | null; activities?: string[][] };
     if (!data.ok) throw new Error('garmin_data_unavailable');
     setGarmin({ latestHealth: data.latestHealth ?? null, activities: data.activities ?? [] });
@@ -472,7 +472,7 @@ function ProgressScreen({ plans, onAdaptExercise, onAddSurfSupport }: { plans: P
   useEffect(() => {
     Promise.all([
       fetch('/api/state?view=sets').then((response) => response.json() as Promise<{ ok: boolean; sets?: LoggedSet[] }>).then(async (data) => data.sets?.length ? data : fetch('/api/sheets').then((response) => response.json() as Promise<{ ok: boolean; sets?: LoggedSet[] }>)),
-      fetch('/api/sheets?source=garmin').then((response) => response.json() as Promise<{ ok: boolean; activities?: string[][] }>),
+      fetch('/api/garmin-sync').then((response) => response.json() as Promise<{ ok: boolean; activities?: string[][] }>),
     ]).then(([sheetData, garminData]) => { setSets(sheetData.sets || []); setActivities(garminData.activities || []); }).finally(() => setLoading(false));
   }, []);
   const datedSets = sets.map((set) => ({ ...set, date: new Date(set.timestamp), weight: Number(set.weightKg) || 0, repCount: Number(set.reps) || 0, effort: Number(set.rpe) || 0 })).filter((set) => !Number.isNaN(set.date.getTime()));
@@ -631,7 +631,9 @@ const exerciseGuides: Record<string, { search: string; gif?: string; cues: strin
 };
 
 function guideForExercise(name: string) {
-  return exerciseGuides[name] || { search: `${name} exercise proper form`, cues: ['בצע את התנועה בשליטה ובטווח שאינו מכאיב', 'שמור נשימה ומנח גוף יציב', 'אם הטכניקה נשברת, הורד משקל או עצור את הסט'] };
+  if (exerciseGuides[name]) return exerciseGuides[name];
+  const bankItem = baseExerciseBank.find((item) => item.name === name || item.aliases.includes(name));
+  return { search: `${bankItem?.aliases[0] || name} exercise proper form`, gif: bankItem?.gif, cues: bankItem ? [bankItem.description, `לגלישה: ${bankItem.surfBenefit}`, `ציוד: ${bankItem.equipment.join(', ')}. בצע בשליטה ובטווח שאינו מכאיב.`] : ['בצע את התנועה בשליטה ובטווח שאינו מכאיב', 'שמור נשימה ומנח גוף יציב', 'אם הטכניקה נשברת, הורד משקל או עצור את הסט'] };
 }
 
 type WorkoutDraft = { weight: number; reps: number; sessionSets: number; note: string; timerMode: 'set' | 'rest'; phaseStartedAt: number; savedSets: Array<{ setId: string; setNumber: number; reps: number; weightKg: number; rpe: number; notes: string; performedAt: string; setDurationSec: number }> };
