@@ -249,6 +249,7 @@ function Dashboard({ plans, activeWorkout, lastWorkoutSummary, onResume, onPlans
   const [recordCount, setRecordCount] = useState(0);
   const [garmin, setGarmin] = useState<{ latestHealth: string[] | null; activities: string[][] }>({ latestHealth: null, activities: [] });
   const [garminSyncState, setGarminSyncState] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
+  const [garminSyncError, setGarminSyncError] = useState('');
   const [activityMatches, setActivityMatches] = useState<Record<string, string>>({});
   const [todayChoice, setTodayChoice] = useState('recommended');
   const [waveForecast, setWaveForecast] = useState<Array<{ date: string; height: number; period: number; direction: number }>>([]);
@@ -287,15 +288,15 @@ function Dashboard({ plans, activeWorkout, lastWorkoutSummary, onResume, onPlans
   }
   async function syncGarminNow() {
     if (garminSyncState === 'syncing') return;
-    setGarminSyncState('syncing');
+    setGarminSyncState('syncing'); setGarminSyncError('');
     try {
       const response = await fetch('/api/garmin-sync', { method: 'POST' });
-      const data = await response.json() as { ok?: boolean };
-      if (!response.ok || !data.ok) throw new Error('sync_failed');
+      const data = await response.json() as { ok?: boolean; error?: string };
+      if (!response.ok || !data.ok) throw new Error(data.error || 'sync_failed');
       await loadGarmin();
       setGarminSyncState('success');
-    } catch {
-      setGarminSyncState('error');
+    } catch (error) {
+      setGarminSyncError(error instanceof Error && error.message.includes('502') ? 'פג תוקף החיבור ל־Garmin. יש להתחבר מחדש פעם אחת.' : 'הסנכרון נכשל. הנתונים השמורים עדיין זמינים.'); setGarminSyncState('error');
     }
   }
   async function askCoach(prompt?: string) {
@@ -428,7 +429,7 @@ function Dashboard({ plans, activeWorkout, lastWorkoutSummary, onResume, onPlans
 
     <details className="group overflow-hidden rounded-3xl border border-border/70 bg-card"><summary className="flex cursor-pointer list-none items-center gap-3 p-5"><span className="flex h-11 w-11 items-center justify-center rounded-xl bg-cyan-400/10 text-cyan-300"><CalendarDays size={22} /></span><div className="flex-1"><p className="font-bold">השבוע שלי</p><p className="text-xs text-muted-foreground">תכנון סביב גלישה · ניתן לשנות כל יום</p></div><ChevronDown className="transition group-open:rotate-180" size={20} /></summary><div className="space-y-2 border-t border-border/70 p-4">{displayedWeek.map((item, index) => { const date = nextSevenDays[index]; const Icon = item.type === 'surf' ? Waves : item.type === 'run' ? Footprints : item.type === 'strength' ? Dumbbell : HeartPulse; return <div key={item.date} className="rounded-2xl bg-muted/35 p-3"><div className="flex items-center gap-3"><Icon size={19} className={item.type === 'surf' ? 'text-cyan-300' : 'text-primary'} /><div className="min-w-0 flex-1"><p className="text-[10px] text-muted-foreground">{index === 0 ? 'היום' : index === 1 ? 'מחר' : new Intl.DateTimeFormat('he-IL', { weekday: 'long' }).format(date)}</p><p className="truncate text-sm font-bold">{plannerActivityName(item)}</p></div><button onClick={() => setEditingPlanDate(editingPlanDate === item.date ? null : item.date)} className="rounded-lg p-2 text-muted-foreground"><Pencil size={15} /></button></div>{editingPlanDate === item.date && <div className="mt-2 grid grid-cols-5 gap-1">{(['surf', 'strength', 'run', 'swim', 'rest'] as PlannedActivityType[]).map((type) => <button key={type} onClick={() => updatePlannedTile(item.date, type)} className="rounded-lg bg-background px-1 py-2 text-[10px] font-bold">{type === 'surf' ? 'גלישה' : type === 'strength' ? 'כוח' : type === 'run' ? 'ריצה' : type === 'swim' ? 'שחייה' : 'מנוחה'}</button>)}</div>}</div>; })}<div className="flex gap-2 pt-2"><Input value={plannerInput} onChange={(event) => setPlannerInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') applyPlannerInput(); }} placeholder="למשל: אגלוש בשישי" className="h-11 flex-1" /><Button onClick={applyPlannerInput} disabled={!plannerInput.trim()} className="h-11 px-4">עדכון</Button></div></div></details>
 
-    <details className="group overflow-hidden rounded-3xl border border-border/70 bg-card"><summary className="flex cursor-pointer list-none items-center gap-3 p-5"><span className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-400/10 text-emerald-400"><Activity size={22} /></span><div className="flex-1"><p className="font-bold">נתוני Garmin</p><p className="text-xs text-muted-foreground">{weekActivities.length} פעילויות · {weekMinutes} דקות · {weekDistance.toFixed(1)} ק״מ</p></div><ChevronDown className="transition group-open:rotate-180" size={20} /></summary><div className="border-t border-border/70 p-4"><div className="grid grid-cols-2 gap-2"><SummaryStat label="פעילויות" value={String(weekActivities.length)} /><SummaryStat label="זמן אימון" value={`${weekMinutes} דק׳`} /><SummaryStat label="מרחק" value={`${weekDistance.toFixed(1)} ק״מ`} /><SummaryStat label="עומס" value={weekLoad ? String(weekLoad) : '—'} /></div><button onClick={syncGarminNow} disabled={garminSyncState === 'syncing'} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-primary/10 px-3 py-3 text-xs font-bold text-primary"><RefreshCw size={15} className={garminSyncState === 'syncing' ? 'animate-spin' : ''} />{garminSyncState === 'syncing' ? 'מסנכרן…' : 'סנכרון עכשיו'}</button></div></details>
+    <details className="group overflow-hidden rounded-3xl border border-border/70 bg-card"><summary className="flex cursor-pointer list-none items-center gap-3 p-5"><span className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-400/10 text-emerald-400"><Activity size={22} /></span><div className="flex-1"><p className="font-bold">נתוני Garmin</p><p className="text-xs text-muted-foreground">{weekActivities.length} פעילויות · {weekMinutes} דקות · {weekDistance.toFixed(1)} ק״מ</p></div><ChevronDown className="transition group-open:rotate-180" size={20} /></summary><div className="border-t border-border/70 p-4"><div className="grid grid-cols-2 gap-2"><SummaryStat label="פעילויות" value={String(weekActivities.length)} /><SummaryStat label="זמן אימון" value={`${weekMinutes} דק׳`} /><SummaryStat label="מרחק" value={`${weekDistance.toFixed(1)} ק״מ`} /><SummaryStat label="עומס" value={weekLoad ? String(weekLoad) : '—'} /></div>{garminSyncError && <p className="mt-3 rounded-xl bg-red-400/10 px-3 py-2 text-xs text-red-300">{garminSyncError}</p>}<button onClick={syncGarminNow} disabled={garminSyncState === 'syncing'} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-primary/10 px-3 py-3 text-xs font-bold text-primary"><RefreshCw size={15} className={garminSyncState === 'syncing' ? 'animate-spin' : ''} />{garminSyncState === 'syncing' ? 'מסנכרן…' : garminSyncState === 'error' ? 'נסה שוב לאחר התחברות' : 'סנכרון עכשיו'}</button></div></details>
   </div>;
 
   return <div className="space-y-5">
