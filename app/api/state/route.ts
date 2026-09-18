@@ -22,11 +22,21 @@ function parseJson(value: unknown) {
   try { return JSON.parse(value); } catch { return null; }
 }
 
+async function importLegacySets() {
+  if (!env.GOOGLE_SHEETS_ENDPOINT || !env.GOOGLE_SHEETS_SECRET) return;
+  const response = await fetch(env.GOOGLE_SHEETS_ENDPOINT, { method: 'POST', headers: { 'content-type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'getRecentSets', limit: 500, secret: env.GOOGLE_SHEETS_SECRET }) });
+  const data = await response.json() as { ok?: boolean; sets?: Array<Record<string, unknown>> };
+  if (!data.ok || !data.sets?.length) return;
+  const statements = data.sets.map((set, index) => env.DB.prepare('INSERT OR IGNORE INTO training_sets (set_id, workout_id, workout_started_at, plan_id, plan_name, exercise_id, exercise_name, set_number, reps, weight_kg, rpe, notes, performed_at, set_duration_sec) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').bind(set.setId || `legacy-${index}-${String(set.timestamp || '')}`, set.workoutId || 'legacy', null, null, set.planName || '', null, set.exerciseName || '', Number(set.setNumber || 0), Number(set.reps || 0), String(set.weightKg ?? 0), Number(set.rpe || 0), set.notes || '', set.timestamp || new Date().toISOString(), 0));
+  for (let index = 0; index < statements.length; index += 75) await env.DB.batch(statements.slice(index, index + 75));
+}
+
 export async function GET(request: Request) {
   await ensureTables();
   const view = new URL(request.url).searchParams.get('view');
   if (view === 'sets') {
-    const result = await env.DB.prepare('SELECT plan_name AS planName, exercise_name AS exerciseName, CAST(reps AS TEXT) AS reps, weight_kg AS weightKg, CAST(rpe AS TEXT) AS rpe, performed_at AS timestamp FROM training_sets ORDER BY performed_at DESC LIMIT 1000').all();
+    let result = await env.DB.prepare('SELECT plan_name AS planName, exercise_name AS exerciseName, CAST(reps AS TEXT) AS reps, weight_kg AS weightKg, CAST(rpe AS TEXT) AS rpe, performed_at AS timestamp FROM training_sets ORDER BY performed_at DESC LIMIT 1000').all();
+    if (!result.results.length) { await importLegacySets(); result = await env.DB.prepare('SELECT plan_name AS planName, exercise_name AS exerciseName, CAST(reps AS TEXT) AS reps, weight_kg AS weightKg, CAST(rpe AS TEXT) AS rpe, performed_at AS timestamp FROM training_sets ORDER BY performed_at DESC LIMIT 1000').all(); }
     return Response.json({ ok: true, sets: result.results });
   }
   const row = await env.DB.prepare('SELECT plans_json, week_plan_json, matches_json, exercise_bank_json, updated_at FROM app_state WHERE owner_key = ?').bind(ownerKey).first<Record<string, unknown>>();
