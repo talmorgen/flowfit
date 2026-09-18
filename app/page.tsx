@@ -487,13 +487,14 @@ function ProgressScreen({ plans, onAdaptExercise, onAddSurfSupport }: { plans: P
   const progressVerdict = strengthDays >= 6 && runCount >= 4 ? { title: 'אתה בכיוון הנכון', detail: `${improvingExercises} תרגילים במגמת שיפור, והיעד השבועי לריצה נשמר.`, tone: 'text-emerald-300' } : strengthDays >= 4 ? { title: 'הבסיס טוב — נדרשת עוד עקביות', detail: runCount < 4 ? 'הכוח מתקדם, אבל כדאי לשמור מקום לריצה קלה אחת בכל שבוע.' : 'שמור על שני אימוני כוח בשבוע כדי לראות מגמה ברורה יותר.', tone: 'text-primary' } : { title: 'עדיין אין מספיק נתונים למגמה', detail: 'עוד כמה אימונים שמורים יאפשרו להשוות כוח, נפח ועקביות בצורה אמינה.', tone: 'text-cyan-300' };
   const personalBests = trends.filter((trend) => trend.latest && trend.change > 0).sort((a, b) => b.change - a.change).slice(0, 3);
   const candidates = trends.filter((trend) => trend.latest && trend.sessions >= 2);
+  const surfSupportPlan = plans.find((plan) => plan.name === 'Surf Support');
   const easyCandidate = candidates.find((trend) => trend.latest.effort > 0 && trend.latest.effort <= 6);
   const stalledCandidate = candidates.find((trend) => trend.change <= 0 && trend.latest.effort >= 8);
   const suggestions = [
     easyCandidate ? { id: `progress-${easyCandidate.name}`, text: `${easyCandidate.name}: הסטים האחרונים היו נוחים. ${easyCandidate.latest.weight > 0 ? 'אפשר להוסיף 2.5 ק״ג.' : 'אפשר להוסיף חזרה אחת.'}`, action: 'עדכון התוכנית', apply: () => onAdaptExercise(easyCandidate.name, 'progress') } : null,
     stalledCandidate ? { id: `deload-${stalledCandidate.name}`, text: `${stalledCandidate.name}: אין התקדמות ברורה והמאמץ גבוה. מומלץ להוריד סט אחד לשבוע התאוששות.`, action: 'הפעלת שבוע קל', apply: () => onAdaptExercise(stalledCandidate.name, 'deload') } : null,
     runCount < 4 ? { id: 'run', text: `ריצה: בוצעו ${runCount} ריצות בארבעת השבועות האחרונים. FlowFit ישמור ריצה קלה בתכנון השבועי.`, action: '', apply: () => undefined } : { id: 'run-good', text: 'ריצה: היעד השבועי נשמר היטב. המשך באותו קצב.', action: '', apply: () => undefined },
-    surfCount >= 6 ? { id: 'surf-support', text: 'נפח הגלישה גבוה. הוסף תרגיל מוביליטי ייעודי לתוכנית Surf Support כדי לתמוך בהתאוששות.', action: 'הוסף לתוכנית', apply: onAddSurfSupport } : null,
+    surfCount >= 6 && surfSupportPlan ? { id: 'surf-support', text: `נפח הגלישה גבוה. אפשר להוסיף תרגיל מוביליטי ייעודי ל־${surfSupportPlan.name} כדי לתמוך בהתאוששות.`, action: 'הוסף לתוכנית', apply: onAddSurfSupport } : null,
   ].filter(Boolean) as Array<{ id: string; text: string; action: string; apply: () => void }>;
   return <div className="space-y-5">
     <div><p className="text-sm text-muted-foreground">ארבעת השבועות האחרונים</p><h2 className="mt-1 text-3xl font-bold">האם אני מתקדם?</h2><p className="mt-2 text-sm text-muted-foreground">כוח, עקביות וריצה — על בסיס הסטים שנשמרו ופעילויות Garmin.</p></div>
