@@ -184,6 +184,16 @@ export default function Home() {
     setPlans((current) => current.map((plan) => plan.id === selectedPlanId ? { ...plan, [field]: value, subtitle: field === 'distanceKm' ? `${value} ק״מ · קצב ${plan.targetPace}` : `${plan.distanceKm} ק״מ · קצב ${value}` } : plan));
   }
 
+  function applyExerciseAdaptation(exerciseName: string, mode: 'progress' | 'deload') {
+    setPlans((current) => current.map((plan) => ({ ...plan, exercises: plan.exercises.map((exercise) => exercise.name !== exerciseName ? exercise : mode === 'deload' ? { ...exercise, sets: Math.max(1, exercise.sets - 1) } : exercise.weight === null ? { ...exercise, reps: exercise.reps + 1 } : { ...exercise, weight: (exercise.weight || 0) + 2.5 }) })));
+  }
+
+  function addSurfSupportExercise() {
+    const bankExercise = exerciseBank.find((item) => item.name === '90/90 Hip Rotation') || exerciseBank.find((item) => item.name === 'Pallof Hold');
+    if (!bankExercise) return;
+    setPlans((current) => current.map((plan) => plan.name !== 'Surf Support' || plan.exercises.some((exercise) => exercise.name === bankExercise.name) ? plan : { ...plan, subtitle: `יציבות וכוח מתפרץ · ${plan.exercises.length + 1} תרגילים`, exercises: [...plan.exercises, { id: Date.now(), name: bankExercise.name, sets: bankExercise.sets, reps: bankExercise.reps, weight: bankExercise.weight || null }] }));
+  }
+
   return (
     <main dir="rtl" className="min-h-screen bg-background pb-24 text-foreground">
       <header className="sticky top-0 z-20 border-b border-white/8 bg-background/92 px-4 py-4 backdrop-blur-xl">
@@ -195,7 +205,7 @@ export default function Home() {
 
       <div className="mx-auto max-w-5xl px-4 py-5">
         {screen === 'dashboard' && <Dashboard plans={plans} activeWorkout={resumeAvailable && workoutId ? { plan: selectedPlan, exercise: activeExercise, completedSets } : null} lastWorkoutSummary={lastWorkoutSummary} onResume={() => setScreen('workout')} onPlans={() => setScreen('plans')} onStart={(planId) => { localStorage.removeItem(ACTIVE_WORKOUT_KEY); setWorkoutId(''); setWorkoutStartedAt(''); setSelectedPlanId(planId); setResumeAvailable(false); setScreen('choose'); }} />}
-        {screen === 'progress' && <ProgressScreen plans={plans} />}
+        {screen === 'progress' && <ProgressScreen plans={plans} onAdaptExercise={applyExerciseAdaptation} onAddSurfSupport={addSurfSupportExercise} />}
         {screen === 'plans' && <PlansScreen plans={plans} selectedPlan={selectedPlan} selectedPlanId={selectedPlanId} setSelectedPlanId={setSelectedPlanId} editing={editing} setEditing={setEditing} updateExercise={updateExercise} updateRunPlan={updateRunPlan} removeExercise={removeExercise} moveExercise={moveExercise} renameExercise={renameExercise} addExercise={addExercise} exerciseBank={exerciseBank} addExerciseToBank={addExerciseToBank} deletePlan={deletePlan} generateComplementaryPlan={generateComplementaryPlan} setScreen={setScreen} />}
         {screen === 'new-plan' && <NewPlanScreen onCancel={() => setScreen('plans')} onCreate={createPlan} />}
         {screen === 'choose' && <ChooseScreen plan={selectedPlan} onChoose={(id) => { if (!workoutId) { setWorkoutId(crypto.randomUUID()); setWorkoutStartedAt(new Date().toISOString()); } setActiveExerciseId(id); setCompletedSets(0); setScreen('workout'); }} />}
@@ -407,10 +417,11 @@ function Dashboard({ plans, activeWorkout, lastWorkoutSummary, onResume, onPlans
 
 type LoggedSet = { exerciseName: string; planName: string; reps: string; weightKg: string; rpe?: string; timestamp: string };
 
-function ProgressScreen({ plans }: { plans: Plan[] }) {
+function ProgressScreen({ plans, onAdaptExercise, onAddSurfSupport }: { plans: Plan[]; onAdaptExercise: (exerciseName: string, mode: 'progress' | 'deload') => void; onAddSurfSupport: () => void }) {
   const [sets, setSets] = useState<LoggedSet[]>([]);
   const [activities, setActivities] = useState<string[][]>([]);
   const [loading, setLoading] = useState(true);
+  const [appliedAdjustment, setAppliedAdjustment] = useState<string | null>(null);
   useEffect(() => {
     Promise.all([
       fetch('/api/sheets').then((response) => response.json() as Promise<{ ok: boolean; sets?: LoggedSet[] }>),
@@ -444,18 +455,18 @@ function ProgressScreen({ plans }: { plans: Plan[] }) {
   const easyCandidate = candidates.find((trend) => trend.latest.effort > 0 && trend.latest.effort <= 6);
   const stalledCandidate = candidates.find((trend) => trend.change <= 0 && trend.latest.effort >= 8);
   const suggestions = [
-    easyCandidate ? `${easyCandidate.name}: הסטים האחרונים היו נוחים. ${easyCandidate.latest.weight > 0 ? 'נסה תוספת קטנה של 2.5 ק״ג.' : 'נסה חזרה נוספת או ירידה איטית יותר.'}` : null,
-    stalledCandidate ? `${stalledCandidate.name}: אין התקדמות ברורה והמאמץ גבוה. שמור משקל והורד מעט נפח לשבוע אחד.` : null,
-    runCount < 4 ? `ריצה: בוצעו ${runCount} ריצות בארבעת השבועות האחרונים. קבע ריצה קלה אחת בכל שבוע.` : 'ריצה: היעד השבועי נשמר היטב. המשך באותו קצב.',
-    surfCount >= 6 ? 'גלישה: נפח הגלישה גבוה. שמור לפחות יום אחד ללא משיכות כבדות אחרי רצף גלישות.' : null,
-  ].filter(Boolean) as string[];
+    easyCandidate ? { id: `progress-${easyCandidate.name}`, text: `${easyCandidate.name}: הסטים האחרונים היו נוחים. ${easyCandidate.latest.weight > 0 ? 'אפשר להוסיף 2.5 ק״ג.' : 'אפשר להוסיף חזרה אחת.'}`, action: 'עדכון התוכנית', apply: () => onAdaptExercise(easyCandidate.name, 'progress') } : null,
+    stalledCandidate ? { id: `deload-${stalledCandidate.name}`, text: `${stalledCandidate.name}: אין התקדמות ברורה והמאמץ גבוה. מומלץ להוריד סט אחד לשבוע התאוששות.`, action: 'הפעלת שבוע קל', apply: () => onAdaptExercise(stalledCandidate.name, 'deload') } : null,
+    runCount < 4 ? { id: 'run', text: `ריצה: בוצעו ${runCount} ריצות בארבעת השבועות האחרונים. FlowFit ישמור ריצה קלה בתכנון השבועי.`, action: '', apply: () => undefined } : { id: 'run-good', text: 'ריצה: היעד השבועי נשמר היטב. המשך באותו קצב.', action: '', apply: () => undefined },
+    surfCount >= 6 ? { id: 'surf-support', text: 'נפח הגלישה גבוה. הוסף תרגיל מוביליטי ייעודי לתוכנית Surf Support כדי לתמוך בהתאוששות.', action: 'הוסף לתוכנית', apply: onAddSurfSupport } : null,
+  ].filter(Boolean) as Array<{ id: string; text: string; action: string; apply: () => void }>;
   return <div className="space-y-5">
     <div><p className="text-sm text-muted-foreground">ארבעת השבועות האחרונים</p><h2 className="mt-1 text-3xl font-bold">האם אני מתקדם?</h2><p className="mt-2 text-sm text-muted-foreground">כוח, עקביות וריצה — על בסיס הסטים שנשמרו ופעילויות Garmin.</p></div>
     {loading ? <Card className="p-8 text-center text-sm text-muted-foreground">מחשב מגמות מהאימונים שלך…</Card> : <>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><MetricCard icon={<Dumbbell size={19} />} label="ימי כוח" value={String(strengthDays)} note="28 ימים" /><MetricCard icon={<Footprints size={19} />} label="ריצות" value={String(runCount)} note={runCount >= 4 ? 'היעד נשמר' : 'יעד: 4 בחודש'} /><MetricCard icon={<Waves size={19} />} label="גלישות" value={String(surfCount)} note="מ־Garmin" /><MetricCard icon={<TrendingUp size={19} />} label="שבועות עקביים" value={`${consistentWeeks}/6`} note="לפחות 2 אימונים" /></div>
       <Card className="border-cyan-400/20 bg-card p-5"><div className="flex items-center justify-between"><div><p className="text-xs text-muted-foreground">עקביות באימוני כוח</p><h3 className="mt-1 font-bold">6 השבועות האחרונים</h3></div><Activity className="text-cyan-300" size={21} /></div><div className="mt-6 flex h-36 items-end gap-2">{weekBars.map((week) => <div key={week.label} className="flex flex-1 flex-col items-center gap-2"><span className="text-xs font-bold">{week.count}</span><div className="w-full rounded-t-xl bg-primary/15" style={{ height: `${Math.max(8, (week.count / maxWeek) * 100)}%` }}><div className="h-full w-full rounded-t-xl bg-[linear-gradient(to_top,#d7fa35,#22d3ee)] opacity-80" /></div><span className="text-[10px] text-muted-foreground">{week.label}</span></div>)}</div></Card>
       <Card className="border-border/70 bg-card p-5"><div><p className="text-xs text-muted-foreground">תרגילים מרכזיים</p><h3 className="mt-1 font-bold">מגמת ביצועים</h3></div><div className="mt-4 space-y-2">{trends.length ? trends.map((trend) => <div key={trend.name} className="flex items-center gap-3 rounded-2xl bg-muted/35 p-3"><span className={`flex h-10 w-10 items-center justify-center rounded-xl ${trend.change > 0 ? 'bg-emerald-400/10 text-emerald-400' : trend.change < 0 ? 'bg-orange-400/10 text-orange-400' : 'bg-muted text-muted-foreground'}`}>{trend.change > 0 ? <ArrowUp size={18} /> : trend.change < 0 ? <ArrowDown size={18} /> : <Minus size={18} />}</span><div className="min-w-0 flex-1"><p className="truncate text-sm font-bold">{trend.name}</p><p className="mt-0.5 text-[11px] text-muted-foreground">{trend.sessions} אימונים · אחרון: {trend.latest.weight > 0 ? `${trend.latest.weight} ק״ג × ` : ''}{trend.latest.repCount}</p></div><strong className={trend.change > 0 ? 'text-emerald-400' : trend.change < 0 ? 'text-orange-400' : 'text-muted-foreground'}>{trend.change > 0 ? '+' : ''}{trend.change}%</strong></div>) : <p className="py-6 text-center text-sm text-muted-foreground">שמור עוד סטים כדי לראות מגמות לכל תרגיל.</p>}</div></Card>
-      <Card className="border-primary/25 bg-[linear-gradient(145deg,#153f49,#0a252d)] p-5 text-white"><div className="flex items-start justify-between"><div><p className="text-xs text-cyan-100/60">התאמות מוצעות</p><h3 className="mt-1 text-xl font-bold">מה לשנות עכשיו</h3></div><Sparkles className="text-primary" size={23} /></div><div className="mt-4 space-y-3">{suggestions.map((suggestion) => <div key={suggestion} className="flex gap-3 rounded-xl bg-white/7 p-3 text-sm leading-6"><Check className="mt-1 shrink-0 text-primary" size={16} /><p>{suggestion}</p></div>)}</div><p className="mt-4 text-[10px] text-cyan-50/50">ההמלצות מתעדכנות ככל שנשמרים סטים ופעילויות חדשות.</p></Card>
+      <Card className="border-primary/25 bg-[linear-gradient(145deg,#153f49,#0a252d)] p-5 text-white"><div className="flex items-start justify-between"><div><p className="text-xs text-cyan-100/60">התאמות מוצעות</p><h3 className="mt-1 text-xl font-bold">מה לשנות עכשיו</h3></div><Sparkles className="text-primary" size={23} /></div><div className="mt-4 space-y-3">{suggestions.map((suggestion) => <div key={suggestion.id} className="rounded-xl bg-white/7 p-3 text-sm leading-6"><div className="flex gap-3"><Check className="mt-1 shrink-0 text-primary" size={16} /><p className="flex-1">{suggestion.text}</p></div>{suggestion.action && <button type="button" disabled={appliedAdjustment === suggestion.id} onClick={() => { suggestion.apply(); setAppliedAdjustment(suggestion.id); }} className={`mt-3 w-full rounded-lg px-3 py-2 text-xs font-bold ${appliedAdjustment === suggestion.id ? 'bg-emerald-400/15 text-emerald-300' : 'bg-primary text-primary-foreground'}`}>{appliedAdjustment === suggestion.id ? 'נשמר בתוכנית ✓' : suggestion.action}</button>}</div>)}</div><p className="mt-4 text-[10px] text-cyan-50/50">שינויים נשמרים בתוכניות רק לאחר לחיצה שלך, ואפשר לערוך אותם במסך התוכניות.</p></Card>
     </>}
   </div>;
 }
