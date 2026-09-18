@@ -28,3 +28,17 @@ export const trainingSets = sqliteTable('training_sets', {
   index('idx_training_sets_exercise_time').on(table.exerciseName, table.performedAt),
   index('idx_training_sets_workout').on(table.workoutId),
 ]);
+
+export const garminActivities = sqliteTable('garmin_activities', {
+  activityId: text('activity_id').primaryKey(),
+  startedAt: text('started_at').notNull(),
+  activityType: text('activity_type').notNull(),
+  rawJson: text('raw_json').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [index('idx_garmin_activities_started_at').on(table.startedAt)]);
+
+export const garminHealth = sqliteTable('garmin_health', {
+  healthDate: text('health_date').primaryKey(),
+  rawJson: text('raw_json').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [index('idx_garmin_health_date').on(table.healthDate)]);
