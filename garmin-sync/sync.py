@@ -87,11 +87,19 @@ def normalize_activity(item: dict[str, Any]) -> dict[str, Any]:
 
 def normalize_health(client: Garmin, day: date) -> dict[str, Any]:
     day_string = day.isoformat()
-    stats = client.get_stats(day_string) or {}
-    sleep = client.get_sleep_data(day_string) or {}
-    hrv = client.get_hrv_data(day_string) or {}
-    readiness = client.get_training_readiness(day_string) or []
-    battery = client.get_body_battery(day_string, day_string) or []
+    def safe(fetch, fallback):
+        try:
+            return fetch() or fallback
+        except Exception:
+            # Garmin occasionally returns 5xx for one metric/day. Preserve the
+            # rest of that day's health record instead of aborting the sync.
+            return fallback
+
+    stats = safe(lambda: client.get_stats(day_string), {})
+    sleep = safe(lambda: client.get_sleep_data(day_string), {})
+    hrv = safe(lambda: client.get_hrv_data(day_string), {})
+    readiness = safe(lambda: client.get_training_readiness(day_string), [])
+    battery = safe(lambda: client.get_body_battery(day_string, day_string), [])
     sleep_dto = sleep.get("dailySleepDTO", sleep)
     hrv_summary = hrv.get("hrvSummary", hrv)
     readiness_item = readiness[0] if readiness else {}
