@@ -65,14 +65,21 @@ def authorize(authorization: str | None) -> None:
 def run_sync(full_history: bool = False) -> dict[str, object]:
     token_dir = ensure_tokens()
     client = Garmin()
-    client.login(str(token_dir))
+    try:
+        client.login(str(token_dir))
+    except Exception as error:
+        raise RuntimeError(f"garmin_login_failed: {error}") from error
     end = date.today()
     start = HISTORY_START if full_history else end - timedelta(days=SYNC_DAYS - 1)
     # Activity history is inexpensive to fetch in one request. Health history
     # requires several Garmin calls per day, so keep it to the configured
     # recent window even during a full activity backfill.
     health_start = end - timedelta(days=min(HEALTH_HISTORY_DAYS, SYNC_DAYS) - 1)
-    activities = [sync.normalize_activity(item) for item in client.get_activities_by_date(start.isoformat(), end.isoformat())]
+    try:
+        activity_items = client.get_activities_by_date(start.isoformat(), end.isoformat())
+    except Exception as error:
+        raise RuntimeError(f"garmin_activities_failed: {error}") from error
+    activities = [sync.normalize_activity(item) for item in activity_items]
     health_days = (end - health_start).days + 1
     health = [sync.normalize_health(client, health_start + timedelta(days=offset)) for offset in range(health_days)]
     return {"ok": True, "activities": len(activities), "healthDays": len(health), "syncedThrough": end.isoformat(), "activityData": activities, "healthData": health, "fullHistory": full_history}
