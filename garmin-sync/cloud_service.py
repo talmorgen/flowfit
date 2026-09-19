@@ -66,7 +66,11 @@ def run_sync(full_history: bool = False) -> dict[str, object]:
     token_dir = ensure_tokens()
     client = Garmin()
     try:
-        client.login(str(token_dir))
+        # Loading through Garmin.login() also calls the social-profile endpoint.
+        # Garmin blocks that optional endpoint from some cloud IPs even when
+        # the data token is valid, so the worker loads the authorized token
+        # directly and uses it only for read-only activity/health requests.
+        client.client.load(str(token_dir))
     except Exception as error:
         raise RuntimeError(f"garmin_login_failed: {error}") from error
     end = date.today()
