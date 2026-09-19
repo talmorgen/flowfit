@@ -37,18 +37,21 @@ def ensure_tokens() -> Path:
     fresh instance recreate the token directory without storing a password.
     """
     token_file = TOKEN_DIR / "garmin_tokens.json"
-    if token_file.exists():
-        return TOKEN_DIR
     if not GARMIN_TOKENS_B64:
+        if token_file.exists():
+            return TOKEN_DIR
         raise RuntimeError("Garmin tokens are not initialized")
     try:
         token_data = base64.b64decode(GARMIN_TOKENS_B64, validate=True)
         json.loads(token_data)
     except (ValueError, json.JSONDecodeError) as error:
         raise RuntimeError("Garmin token configuration is invalid") from error
-    TOKEN_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
-    token_file.write_bytes(token_data)
-    token_file.chmod(0o600)
+    # The environment secret is the deployment source of truth. Replacing a
+    # stale disk copy makes a one-time re-login take effect after redeploy.
+    if not token_file.exists() or token_file.read_bytes() != token_data:
+        TOKEN_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+        token_file.write_bytes(token_data)
+        token_file.chmod(0o600)
     return TOKEN_DIR
 
 
