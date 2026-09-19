@@ -56,7 +56,7 @@ def ensure_tokens() -> Path:
 
 
 def authorize(authorization: str | None) -> None:
-    if not SYNC_API_KEY or not FLOWFIT_ENDPOINT or not FLOWFIT_SECRET:
+    if not SYNC_API_KEY:
         raise HTTPException(status_code=503, detail="service_not_configured")
     if authorization != f"Bearer {SYNC_API_KEY}":
         raise HTTPException(status_code=401, detail="unauthorized")
@@ -72,13 +72,12 @@ def run_sync(full_history: bool = False) -> dict[str, object]:
     activities = [sync.normalize_activity(item) for item in client.get_activities_by_date(start.isoformat(), end.isoformat())]
     health_days = (end - health_start).days + 1
     health = [sync.normalize_health(client, health_start + timedelta(days=offset)) for offset in range(health_days)]
-    result = sync.post(FLOWFIT_ENDPOINT, FLOWFIT_SECRET, {"action": "syncGarmin", "activities": activities, "health": health})
-    return {"ok": True, "activities": result["activities"], "healthDays": result["healthDays"], "syncedThrough": end.isoformat(), "activityData": activities, "healthData": health, "fullHistory": full_history}
+    return {"ok": True, "activities": len(activities), "healthDays": len(health), "syncedThrough": end.isoformat(), "activityData": activities, "healthData": health, "fullHistory": full_history}
 
 
 @app.get("/health")
 def health() -> dict[str, bool]:
-    return {"ok": True, "configured": bool(SYNC_API_KEY and FLOWFIT_ENDPOINT and FLOWFIT_SECRET)}
+    return {"ok": True, "configured": bool(SYNC_API_KEY)}
 
 
 @app.post("/sync")
