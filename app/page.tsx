@@ -22,6 +22,24 @@ function saveCloudState(patch: Record<string, unknown>) {
   return fetch('/api/state', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) }).catch(() => undefined);
 }
 
+const backFriendlyPlan: Plan = { id: 5, name: 'Upper + Core · Back Friendly', subtitle: 'פלג גוף עליון וליבה · עומס נמוך על הגב', accent: 'cyan', kind: 'strength', exercises: [
+  { id: 501, name: 'לחיצת חזה במוט', sets: 3, reps: 7, weight: 55 },
+  { id: 502, name: 'מתח', sets: 3, reps: 6, weight: null },
+  { id: 503, name: 'חתירה נתמכת חזה', sets: 3, reps: 10, weight: 16 },
+  { id: 504, name: 'לחיצת כתפיים בישיבה עם תמיכת גב', sets: 3, reps: 8, weight: 14 },
+  { id: 505, name: 'פולי עליון', sets: 2, reps: 10, weight: 40 },
+  { id: 506, name: 'Face Pull', sets: 2, reps: 18, weight: 12 },
+  { id: 507, name: 'סיבוב חיצוני לכתף', sets: 2, reps: 15, weight: 5 },
+  { id: 508, name: 'שכיבות סמיכה', sets: 2, reps: 12, weight: null },
+  { id: 509, name: 'Dead Bug', sets: 3, reps: 8, weight: null },
+  { id: 510, name: 'Pallof Press', sets: 3, reps: 10, weight: 14 },
+  { id: 511, name: 'Side Plank', sets: 2, reps: 30, weight: null },
+] };
+
+function withBackFriendlyPlan(plans: Plan[]) {
+  return plans.some((plan) => plan.name === backFriendlyPlan.name) ? plans : [...plans, backFriendlyPlan];
+}
+
 const initialPlans: Plan[] = [
   { id: 1, name: 'Full Body A', subtitle: 'האימון הנוכחי · 8 תרגילים', accent: 'lime', exercises: [
     { id: 1, name: 'סקוואט', sets: 3, reps: 7, weight: 70 },
@@ -45,6 +63,7 @@ const initialPlans: Plan[] = [
     { id: 15, name: 'Pallof Press', sets: 3, reps: 10, weight: 12 },
   ]},
   { id: 4, name: 'ריצת בסיס', subtitle: '5.5 ק״מ · קצב נוח', accent: 'orange', kind: 'run', distanceKm: 5.5, targetPace: '5:45', exercises: [] },
+  backFriendlyPlan,
 ];
 
 export default function Home() {
@@ -70,11 +89,11 @@ export default function Home() {
 
   useEffect(() => {
     let cachedPlans = initialPlans; let cachedBank = baseExerciseBank;
-    try { const saved = JSON.parse(localStorage.getItem('flowfit-plans') || 'null') as Plan[] | null; if (saved?.length) cachedPlans = saved; } catch { /* keep defaults */ }
+    try { const saved = JSON.parse(localStorage.getItem('flowfit-plans') || 'null') as Plan[] | null; if (saved?.length) cachedPlans = withBackFriendlyPlan(saved); } catch { /* keep defaults */ }
     try { cachedBank = mergeExerciseBank(JSON.parse(localStorage.getItem('flowfit-exercise-bank') || '[]') as BankExercise[]); } catch { /* keep defaults */ }
     setPlans(cachedPlans); setSelectedPlanId(cachedPlans[0].id); setExerciseBank(cachedBank); setPlansReady(true); setExerciseBankReady(true);
     fetch('/api/state').then((response) => response.json() as Promise<{ ok: boolean; state?: { plans?: Plan[]; exerciseBank?: BankExercise[] } | null }>).then((data) => {
-      if (data.state?.plans?.length) { setPlans(data.state.plans); setSelectedPlanId(data.state.plans[0].id); }
+      if (data.state?.plans?.length) { const mergedPlans = withBackFriendlyPlan(data.state.plans); setPlans(mergedPlans); setSelectedPlanId(mergedPlans[0].id); if (mergedPlans.length !== data.state.plans.length) saveCloudState({ plans: mergedPlans }); }
       else saveCloudState({ plans: cachedPlans, exerciseBank: cachedBank });
       if (data.state?.exerciseBank) setExerciseBank(mergeExerciseBank(data.state.exerciseBank));
     }).catch(() => undefined).finally(() => setCloudReady(true));
