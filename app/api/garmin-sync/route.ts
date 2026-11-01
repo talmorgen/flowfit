@@ -17,13 +17,14 @@ const healthRow = (item: GarminHealth) => [item.date, item.sleepScore, item.slee
 
 async function readCache() {
   await ensureTables();
-  const [activities, health] = await Promise.all([
+  const [activities, health, status] = await Promise.all([
     env.DB.prepare('SELECT raw_json FROM garmin_activities ORDER BY started_at DESC').all<{ raw_json: string }>(),
     env.DB.prepare('SELECT raw_json FROM garmin_health ORDER BY health_date DESC LIMIT 365').all<{ raw_json: string }>(),
+    env.DB.prepare('SELECT COUNT(*) AS total, MAX(updated_at) AS last_synced_at, MAX(started_at) AS latest_activity_at FROM garmin_activities').first<{ total: number; last_synced_at: string | null; latest_activity_at: string | null }>(),
   ]);
   const activityData = activities.results.map((row) => JSON.parse(row.raw_json) as GarminActivity);
   const healthData = health.results.map((row) => JSON.parse(row.raw_json) as GarminHealth);
-  return { activities: activityData.map(activityRow), health: healthData.map(healthRow), latestHealth: healthData.length ? healthRow(healthData[0]) : null };
+  return { activities: activityData.map(activityRow), health: healthData.map(healthRow), latestHealth: healthData.length ? healthRow(healthData[0]) : null, totalActivities: Number(status?.total || 0), lastSyncedAt: status?.last_synced_at || null, latestActivityAt: status?.latest_activity_at || null };
 }
 
 async function storeData(activities: GarminActivity[], health: GarminHealth[]) {
@@ -54,6 +55,15 @@ export async function GET() {
 
 export async function POST(request: Request) {
   if (!env.GARMIN_SYNC_URL || !env.GARMIN_SYNC_API_KEY) return Response.json({ ok: false, error: 'garmin_sync_not_configured' }, { status: 503 });
+  const localSyncKey = request.headers.get('x-flowfit-sync-key');
+  if ((localSyncKey === env.GARMIN_SYNC_API_KEY || request.headers.get('authorization') === `Bearer ${env.GARMIN_SYNC_API_KEY}`) && request.headers.get('content-type')?.includes('application/json')) {
+    const payload = await request.json() as { activities?: GarminActivity[]; health?: GarminHealth[] };
+    const activities = Array.isArray(payload.activities) ? payload.activities : [];
+    const health = Array.isArray(payload.health) ? payload.health : [];
+    await storeData(activities, health);
+    const cache = await readCache();
+    return Response.json({ ok: true, importedActivities: activities.length, importedHealthDays: health.length, totalActivities: cache.activities.length });
+  }
   await ensureTables();
   const existing = await env.DB.prepare('SELECT COUNT(*) AS count FROM garmin_activities').first<{ count: number }>();
   const full = new URL(request.url).searchParams.get('full') === '1' || Number(existing?.count || 0) === 0;

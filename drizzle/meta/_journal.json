@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1789759253410,
+      "tag": "0000_overconfident_thundra",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1789759280606,
+      "tag": "0001_silly_inhumans",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789764845814,
+      "tag": "0002_brief_miek",
+      "breakpoints": true
+    }
+  ]
+}
