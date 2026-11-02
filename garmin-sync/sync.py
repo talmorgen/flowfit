@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import getpass
 import json
 import os
@@ -19,6 +20,22 @@ ROOT = Path(__file__).resolve().parents[1]
 PRIVATE_DIR = ROOT / ".flowfit-private"
 TOKEN_DIR = PRIVATE_DIR / "garmin-tokens"
 CONFIG_FILE = PRIVATE_DIR / "sync-config.json"
+CLOUD_TOKEN_FILE = PRIVATE_DIR / "garmin-tokens.b64"
+
+
+def export_cloud_tokens() -> Path:
+    """Export the authenticated Garmin session for the cloud worker.
+
+    The file lives under the gitignored private directory and is readable only
+    by the current user. It contains session tokens, never the Garmin password.
+    """
+    token_file = TOKEN_DIR / "garmin_tokens.json"
+    if not token_file.exists():
+        raise RuntimeError("Garmin session token was not created")
+    PRIVATE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    CLOUD_TOKEN_FILE.write_text(base64.b64encode(token_file.read_bytes()).decode())
+    CLOUD_TOKEN_FILE.chmod(0o600)
+    return CLOUD_TOKEN_FILE
 
 
 def pick(data: Any, *keys: str, default: Any = None) -> Any:
